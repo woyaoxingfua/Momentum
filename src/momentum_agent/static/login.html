@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Momentum — 登录</title>
+  <link rel="stylesheet" href="/app.css" />
+  <style>
+    .login-shell {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 24px;
+    }
+    .login-card {
+      width: 100%; max-width: 380px;
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: 12px; box-shadow: var(--shadow); padding: 32px;
+    }
+    .login-card h1 { margin: 0 0 4px; font-size: 28px; }
+    .login-card .eyebrow { margin-bottom: 24px; }
+    .login-card label { display: block; margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+    .login-card input { width: 100%; height: 42px; padding: 0 12px; margin-top: 4px;
+      border: 1px solid var(--line); border-radius: 8px; background: #fbfcf9; color: var(--text); outline: none; }
+    .login-card input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,111,99,0.12); }
+    .login-card button { width: 100%; height: 44px; margin-top: 8px;
+      border: none; border-radius: 8px; background: var(--accent); color: #fff;
+      font-size: 15px; font-weight: 600; cursor: pointer; }
+    .login-card button:hover { background: var(--accent-strong); }
+    .login-card .error { color: #a05d24; font-size: 13px; margin-top: 12px; text-align: center; }
+    .login-card .switch { text-align: center; margin-top: 16px; font-size: 13px; color: var(--muted); }
+    .login-card .switch a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div class="login-shell">
+  <div class="login-card">
+    <p class="eyebrow">Momentum</p>
+    <h1 id="formTitle">登录</h1>
+
+    <form id="authForm">
+      <label>用户名 <input id="userId" autocomplete="username" required /></label>
+      <label id="displayNameLabel" hidden>显示名称 <input id="displayName" /></label>
+      <label>密码 <input id="password" type="password" autocomplete="current-password" required /></label>
+      <button type="submit" id="submitBtn">登录</button>
+    </form>
+
+    <div class="error" id="error"></div>
+    <div class="switch">
+      <span id="switchText">没有账号？</span>
+      <a id="switchLink">注册</a>
+    </div>
+  </div>
+</div>
+
+<script>
+// redirect if already logged in
+if (localStorage.getItem("momentum_token")) {
+  window.location.href = "/";
+}
+
+let mode = "login";
+
+document.querySelector("#switchLink").addEventListener("click", () => {
+  mode = mode === "login" ? "register" : "login";
+  document.querySelector("#formTitle").textContent = mode === "login" ? "登录" : "注册";
+  document.querySelector("#submitBtn").textContent = mode === "login" ? "登录" : "注册";
+  document.querySelector("#displayNameLabel").hidden = mode === "login";
+  document.querySelector("#switchText").textContent = mode === "login" ? "没有账号？" : "已有账号？";
+  document.querySelector("#switchLink").textContent = mode === "login" ? "注册" : "登录";
+  document.querySelector("#error").textContent = "";
+});
+
+document.querySelector("#authForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const el = document.querySelector("#error");
+  el.textContent = "";
+
+  const userId = document.querySelector("#userId").value.trim();
+  const password = document.querySelector("#password").value.trim();
+  if (!userId || !password) { el.textContent = "请填写用户名和密码"; return; }
+
+  const endpoint = mode === "login" ? "/api/login" : "/api/register";
+  const body = { user_id: userId, password };
+  if (mode === "register") {
+    const dn = document.querySelector("#displayName").value.trim();
+    body.display_name = dn || userId;
+    if (password.length < 4) { el.textContent = "密码至少 4 位"; return; }
+  }
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { el.textContent = data.error || "请求失败"; return; }
+
+    if (mode === "login") {
+      localStorage.setItem("momentum_token", data.token);
+      localStorage.setItem("momentum_user", data.user_id);
+      window.location.href = "/";
+    } else {
+      el.textContent = "";
+      mode = "login";
+      document.querySelector("#formTitle").textContent = "登录";
+      document.querySelector("#submitBtn").textContent = "登录";
+      document.querySelector("#displayNameLabel").hidden = true;
+      document.querySelector("#switchText").textContent = "已有账号？";
+      document.querySelector("#switchLink").textContent = "登录";
+    }
+  } catch (err) {
+    el.textContent = "网络错误：" + err.message;
+  }
+});
+</script>
+</body>
+</html>
