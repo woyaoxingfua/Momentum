@@ -268,8 +268,17 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
     from agents import function_tool
 
     @function_tool
-    def create_task(title: str, due_at: str | None = None, priority: str = "medium", notes: str | None = None) -> str:
-        """Create a task in the local todo database."""
+    def create_task(title: str, due_at: str | None = None, priority: str = "medium", notes: str | None = None, tags: list[str] | None = None, recurrence: str | None = None) -> str:
+        """Create a task in the local todo database.
+        
+        Args:
+            title: Task title
+            due_at: Due date/time in ISO format or natural language (e.g., "明天下午")
+            priority: low/medium/high
+            notes: Additional notes
+            tags: List of tags to add to the task
+            recurrence: daily/weekly/monthly for recurring tasks
+        """
         parsed = parse_task_text(f"{due_at or ''} {title}")
         chosen_priority = Priority(priority) if priority in Priority._value2member_map_ else parsed.priority
         task = store.create_task(
@@ -278,12 +287,15 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
             priority=chosen_priority,
             estimated_minutes=parsed.estimated_minutes,
             notes=notes,
+            tags=tags,
+            recurrence=recurrence,
             user_id=user_id,
         )
         log.info("agent tool create_task: #%d user=%r", task.id, user_id)
         due_info = f"，截止 {task.due_at.strftime('%Y-%m-%d %H:%M')}" if task.due_at else ""
         rec_info = {"daily": "（每天重复）", "weekly": "（每周重复）", "monthly": "（每月重复）"}.get(task.recurrence or "", "")
-        return f"已创建任务 #{task.id}：{task.title}{due_info}{rec_info}"
+        tags_info = f"，标签：{', '.join(task.tags)}" if task.tags else ""
+        return f"已创建任务 #{task.id}：{task.title}{due_info}{rec_info}{tags_info}"
 
     @function_tool
     def create_plan(text: str) -> str:
@@ -302,7 +314,8 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
             {"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority.value,
              "due_at": t.due_at.isoformat() if t.due_at else None,
              "estimated_minutes": t.estimated_minutes,
-             "parent_task_id": t.parent_task_id, "recurrence": t.recurrence}
+             "parent_task_id": t.parent_task_id, "recurrence": t.recurrence,
+             "tags": t.tags}
             for t in tasks
         ]
 
@@ -337,17 +350,18 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
     @function_tool
     def edit_task(task_id: int, title: str | None = None, due_at: str | None = None,
                   priority: str | None = None, estimated_minutes: int | None = None,
-                  notes: str | None = None) -> str:
+                  notes: str | None = None, tags: list[str] | None = None) -> str:
         """Edit a task's fields. Pass only the fields you want to change. due_at in ISO format."""
         parsed_due = datetime.fromisoformat(due_at) if due_at else None
         parsed_pri = Priority(priority) if priority and priority in Priority._value2member_map_ else None
         task = store.update_task(task_id, title=title, due_at=parsed_due,
                                  priority=parsed_pri, estimated_minutes=estimated_minutes,
-                                 notes=notes, user_id=user_id)
+                                 notes=notes, tags=tags, user_id=user_id)
         if not task:
             return f"任务 #{task_id} 不存在或不属于你"
         due = f"，截止 {task.due_at.strftime('%Y-%m-%d %H:%M')}" if task.due_at else ""
-        return f"已更新任务 #{task.id}：{task.title}{due}"
+        tags_info = f"，标签：{', '.join(task.tags)}" if task.tags else ""
+        return f"已更新任务 #{task.id}：{task.title}{due}{tags_info}"
 
     @function_tool
     def get_daily_review() -> str:
@@ -430,10 +444,142 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         all_mem = store.get_all_memory(user_id=user_id)
         return {k: v for k, v in all_mem.items() if k.startswith("agent_note_")}
 
+    @function_tool
+    def reopen_task(task_id: int) -> str:
+        """Reopen a previously completed or dropped task by its ID."""
+        task = store.reopen_task(task_id, user_id=user_id)
+        if not task:
+            return f"任务 #{task_id} 不存在或不属于你"
+        return f"已重新打开任务 #{task.id}：{task.title}"
+
+    @function_tool
+    def get_task(task_id: int) -> dict[str, str | int | None] | None:
+        """Get detailed information about a specific task by ID."""
+        task = store._get_task(task_id)
+        if not task or (task.user_id and task.user_id != user_id):
+            return None
+        return {
+            "id": task.id,
+            "title": task.title,
+            "status": task.status.value,
+            "priority": task.priority.value,
+            "due_at": task.due_at.isoformat() if task.due_at else None,
+            "estimated_minutes": task.estimated_minutes,
+            "notes": task.notes,
+            "parent_task_id": task.parent_task_id,
+            "recurrence": task.recurrence,
+            "tags": task.tags,
+            "created_at": task.created_at.isoformat(),
+            "updated_at": task.updated_at.isoformat(),
+        }
+
+    @function_tool
+    def get_all_tags() -> list[str]:
+        """Get all tags used by the user."""
+        return store.get_all_tags(user_id=user_id)
+
+    @function_tool
+    def get_tasks_by_tag(tag: str) -> list[dict[str, str | int | None]]:
+        """Get all tasks tagged with a specific tag."""
+        tasks = store.get_tasks_by_tag(tag, user_id=user_id)
+        return [
+            {"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority.value,
+             "due_at": t.due_at.isoformat() if t.due_at else None, "tags": t.tags}
+            for t in tasks
+        ]
+
+    @function_tool
+    def add_tags_to_task(task_id: int, tags: list[str]) -> str:
+        """Add tags to a specific task. Tags will be deduplicated."""
+        task = store._get_task(task_id)
+        if not task or (task.user_id and task.user_id != user_id):
+            return f"任务 #{task_id} 不存在或不属于你"
+        existing_tags = task.tags or []
+        all_tags = list(set(existing_tags + tags))
+        updated_task = store.update_task(task_id, tags=all_tags, user_id=user_id)
+        if not updated_task:
+            return f"更新任务 #{task_id} 失败"
+        tags_info = f"，标签：{', '.join(updated_task.tags)}" if updated_task.tags else ""
+        return f"已更新任务 #{updated_task.id}：{updated_task.title}{tags_info}"
+
+    @function_tool
+    def remove_tags_from_task(task_id: int, tags: list[str]) -> str:
+        """Remove specific tags from a task."""
+        task = store._get_task(task_id)
+        if not task or (task.user_id and task.user_id != user_id):
+            return f"任务 #{task_id} 不存在或不属于你"
+        existing_tags = task.tags or []
+        new_tags = [t for t in existing_tags if t not in tags]
+        updated_task = store.update_task(task_id, tags=new_tags if new_tags else None, user_id=user_id)
+        if not updated_task:
+            return f"更新任务 #{task_id} 失败"
+        tags_info = f"，标签：{', '.join(updated_task.tags)}" if updated_task.tags else ""
+        return f"已更新任务 #{updated_task.id}：{updated_task.title}{tags_info}"
+
+    @function_tool
+    def batch_complete_tasks(task_ids: list[int]) -> str:
+        """Mark multiple tasks as completed at once. Returns count of updated tasks."""
+        updated = store.batch_update_status(task_ids, TaskStatus.DONE, user_id=user_id)
+        return f"已完成 {updated} 个任务"
+
+    @function_tool
+    def batch_start_tasks(task_ids: list[int]) -> str:
+        """Mark multiple tasks as in-progress at once. Returns count of updated tasks."""
+        updated = store.batch_update_status(task_ids, TaskStatus.DOING, user_id=user_id)
+        return f"已开始 {updated} 个任务"
+
+    @function_tool
+    def batch_add_tags_to_tasks(task_ids: list[int], tags: list[str]) -> str:
+        """Add tags to multiple tasks at once. Returns count of updated tasks."""
+        updated = store.batch_add_tags(task_ids, tags, user_id=user_id)
+        return f"已为 {updated} 个任务添加标签：{', '.join(tags)}"
+
+    @function_tool
+    def export_user_data() -> dict:
+        """Export all user data (tasks and memory) as a JSON-compatible dictionary for backup."""
+        return store.export_user_data(user_id=user_id)
+
+    @function_tool
+    def import_user_data(data: dict) -> str:
+        """Import user data from a dictionary. WARNING: This may create duplicate tasks."""
+        try:
+            imported = store.import_user_data(data, user_id=user_id)
+            return f"已导入 {imported} 个任务"
+        except Exception as e:
+            return f"导入失败：{str(e)}"
+
+    @function_tool
+    def set_task_recurrence(task_id: int, recurrence: str | None) -> str:
+        """Set or remove recurrence for a task. recurrence can be daily/weekly/monthly, or None to remove."""
+        task = store._get_task(task_id)
+        if not task or (task.user_id and task.user_id != user_id):
+            return f"任务 #{task_id} 不存在或不属于你"
+        if recurrence and recurrence not in ["daily", "weekly", "monthly"]:
+            return f"无效的重复选项：{recurrence}。可选值：daily, weekly, monthly"
+        updated_task = store.update_task(task_id, recurrence=recurrence, user_id=user_id)
+        if not updated_task:
+            return f"更新任务 #{task_id} 失败"
+        rec_info = f"，重复：{updated_task.recurrence}" if updated_task.recurrence else "，已移除重复设置"
+        return f"已更新任务 #{updated_task.id}：{updated_task.title}{rec_info}"
+
+    @function_tool
+    def get_task_subtasks(task_id: int) -> list[dict[str, str | int | None]]:
+        """Get all subtasks for a specific parent task."""
+        all_tasks = store.list_tasks(status=None, user_id=user_id)
+        subtasks = [t for t in all_tasks if t.parent_task_id == task_id]
+        return [
+            {"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority.value,
+             "due_at": t.due_at.isoformat() if t.due_at else None}
+            for t in subtasks
+        ]
+
     return [
         create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context,
         complete_task, start_task, drop_task, postpone_task, search_tasks, edit_task,
-        save_note, get_my_notes,
+        save_note, get_my_notes, reopen_task, get_task, get_all_tags, get_tasks_by_tag,
+        add_tags_to_task, remove_tags_from_task, batch_complete_tasks, batch_start_tasks,
+        batch_add_tags_to_tasks, export_user_data, import_user_data, set_task_recurrence,
+        get_task_subtasks,
     ]
 
 
