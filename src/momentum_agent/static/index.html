@@ -36,6 +36,17 @@
           <p id="adviceText">正在读取任务状态...</p>
         </section>
 
+        <section class="heartbeat" id="heartbeatSection" aria-live="polite" style="display: none;">
+          <div class="heartbeat-header">
+            <span class="heartbeat-icon">💡</span>
+            <span class="insight-label">主动提醒</span>
+          </div>
+          <p id="heartbeatText"></p>
+          <div class="heartbeat-actions">
+            <button id="heartbeatDismiss" class="text-button">稍后提醒</button>
+          </div>
+        </section>
+
         <section class="task-list" aria-label="任务列表">
           <div class="section-heading">
             <div class="status-tabs">
@@ -80,6 +91,20 @@
             <label>工作时间结束
               <input id="configWorkEnd" type="time" value="18:00" />
             </label>
+            <div class="config-divider"></div>
+            <label class="checkbox-label">
+              <input id="configHeartbeatEnabled" type="checkbox" />
+              启用主动提醒
+            </label>
+            <label>提醒开始时间
+              <input id="configHeartbeatStart" type="time" value="09:00" />
+            </label>
+            <label>提醒结束时间
+              <input id="configHeartbeatEnd" type="time" value="21:00" />
+            </label>
+            <label>提醒间隔（小时）
+              <input id="configHeartbeatInterval" type="number" min="1" max="24" value="4" />
+            </label>
             <button id="configSaveButton" class="primary">保存</button>
           </div>
         </details>
@@ -100,6 +125,7 @@
           </select>
         </label>
         <label>预估时间（分钟）<input id="editEstimate" type="number" min="1" max="480" /></label>
+        <label>标签（逗号分隔） <input id="editTags" placeholder="例如：工作, 紧急, 个人" /></label>
         <label>备注 <input id="editNotes" /></label>
         <div class="edit-actions">
           <button type="submit" class="primary">保存</button>

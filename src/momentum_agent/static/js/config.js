@@ -35,6 +35,11 @@ export async function saveConfig() {
       body: JSON.stringify({ key, value }),
     });
   }
+  
+  // 保存心跳配置
+  const { saveHeartbeatConfig } = await import("./heartbeat.js");
+  await saveHeartbeatConfig();
+  
   const { loadAdvice } = await import("./advice.js");
   await loadAdvice();
 }

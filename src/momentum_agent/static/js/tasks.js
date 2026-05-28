@@ -37,6 +37,10 @@ function renderTaskCard(task) {
   const statusBadge = task.status !== "todo"
     ? `<span class="badge status-badge status-${task.status}">${STATUS_LABELS[task.status] || task.status}</span>`
     : "";
+  
+  const tagsHtml = task.tags && task.tags.length > 0
+    ? task.tags.map(tag => `<span class="badge tag">${escapeHtml(tag)}</span>`).join("")
+    : "";
 
   return `
     <article class="task ${task.parent_task_id ? "subtask" : ""} ${task.status !== "todo" ? `task-${task.status}` : ""}">
@@ -49,6 +53,7 @@ function renderTaskCard(task) {
           <span>${task.estimated_minutes ? `${task.estimated_minutes} 分钟` : "未估时"}</span>
           ${task.parent_task_id ? `<span>子任务</span>` : ""}
           ${task.recurrence ? `<span class="badge recurrence">${recurrenceText(task.recurrence)}</span>` : ""}
+          ${tagsHtml}
         </div>
       </div>
       <div class="task-actions">
@@ -130,17 +135,26 @@ async function openEditDialog(taskId) {
   els.editDue.value = toDatetimeLocal(task.due_at);
   els.editPriority.value = task.priority;
   els.editEstimate.value = task.estimated_minutes || "";
+  els.editTags.value = task.tags ? task.tags.join(", ") : "";
   els.editNotes.value = task.notes || "";
   els.editDialog.showModal();
 }
 
 export async function saveEdit(event) {
   event.preventDefault();
+  
+  const tagsStr = els.editTags.value.trim();
+  let tags = null;
+  if (tagsStr) {
+    tags = tagsStr.split(",").map(t => t.trim()).filter(t => t);
+  }
+  
   const body = {
     title: els.editTitle.value.trim(),
     due_at: els.editDue.value || null,
     priority: els.editPriority.value,
     estimated_minutes: els.editEstimate.value ? Number(els.editEstimate.value) : null,
+    tags,
     notes: els.editNotes.value.trim() || null,
   };
   await requestJson(`/api/tasks/${els.editTaskId.value}`, { method: "PUT", body: JSON.stringify(body) });
