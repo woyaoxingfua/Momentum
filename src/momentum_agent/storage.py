@@ -572,6 +572,107 @@ class TaskStore:
         log.info("import user=%r tasks=%d", user_id, imported)
         return imported
 
+    # ── heartbeat / 心跳功能 ─────────────────────────────────
+
+    def get_heartbeat_config(self, user_id: str = DEFAULT_USER) -> dict:
+        """Get user's heartbeat configuration.
+        
+        Returns:
+            dict with:
+                enabled: bool - whether heartbeat is enabled
+                start_hour: int - start hour (0-23)
+                end_hour: int - end hour (0-23)
+                interval_hours: int - interval in hours between suggestions
+                last_heartbeat_at: str | None - ISO time of last heartbeat, or None
+        """
+        config_str = self.get_memory("heartbeat_config", user_id=user_id)
+        if config_str:
+            import json
+            try:
+                return json.loads(config_str)
+            except json.JSONDecodeError:
+                pass
+        # Default config
+        return {
+            "enabled": False,
+            "start_hour": 9,
+            "end_hour": 21,
+            "interval_hours": 4,
+            "last_heartbeat_at": None
+        }
+
+    def set_heartbeat_config(self, enabled: bool | None = None,
+                             start_hour: int | None = None,
+                             end_hour: int | None = None,
+                             interval_hours: int | None = None,
+                             user_id: str = DEFAULT_USER) -> dict:
+        """Update user's heartbeat configuration.
+        
+        Args:
+            enabled: whether to enable heartbeat
+            start_hour: start hour (0-23)
+            end_hour: end hour (0-23)
+            interval_hours: interval in hours between suggestions
+            user_id: user ID
+            
+        Returns:
+            updated config dict
+        """
+        config = self.get_heartbeat_config(user_id=user_id)
+        
+        if enabled is not None:
+            config["enabled"] = enabled
+        if start_hour is not None:
+            config["start_hour"] = max(0, min(23, start_hour))
+        if end_hour is not None:
+            config["end_hour"] = max(0, min(23, end_hour))
+        if interval_hours is not None:
+            config["interval_hours"] = max(1, min(24, interval_hours))
+        
+        import json
+        self.set_memory("heartbeat_config", json.dumps(config), user_id=user_id)
+        return config
+
+    def update_last_heartbeat(self, user_id: str = DEFAULT_USER) -> dict:
+        """Update last heartbeat timestamp to now.
+        
+        Returns:
+            updated config dict
+        """
+        config = self.get_heartbeat_config(user_id=user_id)
+        config["last_heartbeat_at"] = utcnow().isoformat()
+        import json
+        self.set_memory("heartbeat_config", json.dumps(config), user_id=user_id)
+        return config
+
+    def should_trigger_heartbeat(self, user_id: str = DEFAULT_USER) -> bool:
+        """Check if heartbeat should be triggered now.
+        
+        Returns:
+            True if should trigger, False otherwise
+        """
+        config = self.get_heartbeat_config(user_id=user_id)
+        
+        if not config["enabled"]:
+            return False
+        
+        now = datetime.now().astimezone()
+        current_hour = now.hour
+        
+        # Check if current time is within start/end hours
+        if current_hour < config["start_hour"] or current_hour > config["end_hour"]:
+            return False
+        
+        # Check if enough time has passed since last heartbeat
+        if config["last_heartbeat_at"]:
+            last_heartbeat = datetime.fromisoformat(config["last_heartbeat_at"])
+            last_heartbeat = last_heartbeat.astimezone() if last_heartbeat.tzinfo else last_heartbeat.replace(tzinfo=timezone.utc).astimezone()
+            hours_since = (now - last_heartbeat).total_seconds() / 3600
+            if hours_since < config["interval_hours"]:
+                return False
+        
+        return True
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)

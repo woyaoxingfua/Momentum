@@ -28,8 +28,9 @@ from .agent_app import (
 from .auth import hash_password
 from .config import get_current_user
 from .logger import get_logger, init_from_env
-from .models import Task, TaskStatus
-from .storage import DEFAULT_USER, TaskStore
+from .models import Priority, Task, TaskStatus
+from .storage import TaskStore
+from .context import build_user_context, heartbeat_suggestion
 
 log = get_logger("web")
 
@@ -94,6 +95,10 @@ class MomentumHandler(BaseHTTPRequestHandler):
                     self.handle_list_tasks(status, user_id)
             elif parsed.path == "/api/tags":
                 self.handle_get_all_tags(user_id)
+            elif parsed.path == "/api/heartbeat/config":
+                self.handle_get_heartbeat_config(user_id)
+            elif parsed.path == "/api/heartbeat/suggestion":
+                self.handle_get_heartbeat_suggestion(user_id)
             elif parsed.path == "/api/export":
                 self.handle_export(user_id)
             elif parsed.path == "/api/advice":
@@ -154,6 +159,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 self.handle_set_config(user_id)
             elif parsed.path == "/api/import":
                 self.handle_import(user_id)
+            elif parsed.path == "/api/heartbeat/config":
+                self.handle_set_heartbeat_config(user_id)
             elif parsed.path == "/api/batch/status":
                 self.handle_batch_update_status(user_id)
             elif parsed.path == "/api/batch/tags":
@@ -447,6 +454,36 @@ class MomentumHandler(BaseHTTPRequestHandler):
             self.send_json({"message": f"已更新 {updated} 个任务。"})
         except Exception as exc:
             self.send_json({"error": f"批量添加标签失败：{exc}"}, HTTPStatus.BAD_REQUEST)
+
+    def handle_get_heartbeat_config(self, user_id: str) -> None:
+        config = TaskStore(self.db_path).get_heartbeat_config(user_id=user_id)
+        self.send_json({"config": config})
+
+    def handle_set_heartbeat_config(self, user_id: str) -> None:
+        payload = self.read_json()
+        store = TaskStore(self.db_path)
+        config = store.set_heartbeat_config(
+            enabled=payload.get("enabled"),
+            start_hour=payload.get("start_hour"),
+            end_hour=payload.get("end_hour"),
+            interval_hours=payload.get("interval_hours"),
+            user_id=user_id
+        )
+        status = "已启用" if config["enabled"] else "已禁用"
+        self.send_json({"status": status, "config": config})
+
+    def handle_get_heartbeat_suggestion(self, user_id: str) -> None:
+        store = TaskStore(self.db_path)
+        tasks = store.list_tasks(status=None, user_id=user_id)
+        ctx = build_user_context(tasks)
+        suggestion = heartbeat_suggestion(tasks, ctx)
+        should_trigger = store.should_trigger_heartbeat(user_id=user_id)
+        store.update_last_heartbeat(user_id=user_id)
+        self.send_json({
+            "suggestion": suggestion,
+            "should_trigger": should_trigger,
+            "config": store.get_heartbeat_config(user_id=user_id)
+        })
 
     def read_json(self) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0"))

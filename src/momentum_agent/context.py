@@ -138,3 +138,86 @@ def daily_review(tasks: list[Task], context: UserContext) -> str:
 
 def priority_rank(priority: str) -> int:
     return {"high": 0, "medium": 1, "low": 2}.get(priority, 1)
+
+
+def heartbeat_suggestion(tasks: list[Task], context: UserContext) -> str:
+    """Generate a friendly, proactive heartbeat suggestion for the user.
+    
+    This should be a natural, engaging message that makes the user want to
+    continue with their tasks without feeling pressured.
+    """
+    if not tasks:
+        return (
+            "👋 嘿！现在是个好时机来规划一下今天要做什么。\n"
+            "要不要花 2 分钟创建一个今天最想推进的小任务？"
+        )
+
+    overdue = [task for task in tasks if task.due_at and task.due_at < context.now]
+    due_today = [
+        task
+        for task in tasks
+        if task.due_at and task.due_at.date() == context.now.date()
+    ]
+    doing_tasks = [task for task in tasks if task.status.value == "doing"]
+    ranked = ranked_tasks(tasks, context)
+    next_task = ranked[0]
+
+    hour = context.now.hour
+    
+    # Time-based greetings
+    if hour < 12:
+        greeting = "☀️ 早上好！"
+    elif hour < 17:
+        greeting = "🌤️ 下午好！"
+    else:
+        greeting = "🌙 晚上好！"
+
+    suggestions = []
+    
+    # Different suggestion strategies
+    if overdue:
+        suggestions.append(
+            f"看到有 {len(overdue)} 个任务过期了，没关系！"
+            f"要不要先快速处理一下「{overdue[0].title}」？"
+        )
+    elif doing_tasks:
+        suggestions.append(
+            f"你有正在进行的任务「{doing_tasks[0].title}」，"
+            f"要不要继续推进它？预计还需要 {doing_tasks[0].estimated_minutes or 25} 分钟。"
+        )
+    elif due_today:
+        suggestions.append(
+            f"今天有 {len(due_today)} 个任务要完成，"
+            f"「{due_today[0].title}」是个不错的起点！"
+        )
+    elif next_task.priority.value == "high":
+        suggestions.append(
+            f"高优先级任务「{next_task.title}」在等你，"
+            f"预计需要 {next_task.estimated_minutes or 25} 分钟，现在开始正好！"
+        )
+    else:
+        suggestions.append(
+            f"从「{next_task.title}」开始怎么样？"
+            f"预计 {next_task.estimated_minutes or 25} 分钟就能看到进展。"
+        )
+    
+    # Add energy-based suggestion
+    if context.energy == "high":
+        suggestions.append("现在精力正好，适合处理有挑战的任务！")
+    elif context.energy == "medium":
+        suggestions.append("当前状态不错，保持节奏就好。")
+    else:
+        suggestions.append("累了就先休息，或者选个 15 分钟的轻松小任务。")
+    
+    # Add task count summary
+    todo_count = len([t for t in tasks if t.status.value == "todo"])
+    if todo_count > 5:
+        suggestions.append(f"有 {todo_count} 个待办，别着急，一个一个来。")
+    elif todo_count == 0:
+        suggestions.append("待办清零了！很棒！要不要规划一下明天？")
+    
+    # Combine greeting with first suggestion and a friendly prompt
+    main_suggestion = suggestions[0]
+    extra = suggestions[1] if len(suggestions) > 1 else ""
+    
+    return f"{greeting} {main_suggestion}\n\n{extra}".strip()

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .config import DEFAULT_USER_ID, ProviderConfig, get_current_user, load_provider_config
-from .context import build_user_context, choose_next_action, daily_review
+from .context import build_user_context, choose_next_action, daily_review, heartbeat_suggestion
 from .logger import get_logger
 from .models import ParsedTaskOutput, PlanOutput, Priority, TaskStatus
 from .parser import ParsedTask, parse_task_text
@@ -573,13 +573,65 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
             for t in subtasks
         ]
 
+    @function_tool
+    def get_heartbeat_config() -> dict:
+        """Get the current heartbeat configuration for the user."""
+        return store.get_heartbeat_config(user_id=user_id)
+
+    @function_tool
+    def set_heartbeat_config(enabled: bool | None = None,
+                             start_hour: int | None = None,
+                             end_hour: int | None = None,
+                             interval_hours: int | None = None) -> dict:
+        """Configure the heartbeat feature.
+        
+        Args:
+            enabled: whether to enable heartbeat (True/False)
+            start_hour: start hour for suggestions (0-23, default 9)
+            end_hour: end hour for suggestions (0-23, default 21)
+            interval_hours: hours between suggestions (1-24, default 4)
+            
+        Returns:
+            updated config dictionary
+        """
+        config = store.set_heartbeat_config(
+            enabled=enabled,
+            start_hour=start_hour,
+            end_hour=end_hour,
+            interval_hours=interval_hours,
+            user_id=user_id
+        )
+        status = "已启用" if config["enabled"] else "已禁用"
+        return {
+            "status": status,
+            "config": config
+        }
+
+    @function_tool
+    def should_trigger_heartbeat() -> bool:
+        """Check if heartbeat should be triggered right now based on config and time."""
+        return store.should_trigger_heartbeat(user_id=user_id)
+
+    @function_tool
+    def get_heartbeat_suggestion() -> str:
+        """Get a friendly, proactive heartbeat suggestion for the user.
+        
+        This will also update the last heartbeat timestamp.
+        """
+        tasks = store.list_tasks(status=None, user_id=user_id)
+        ctx = build_user_context(tasks)
+        suggestion = heartbeat_suggestion(tasks, ctx)
+        store.update_last_heartbeat(user_id=user_id)
+        return suggestion
+
     return [
         create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context,
         complete_task, start_task, drop_task, postpone_task, search_tasks, edit_task,
         save_note, get_my_notes, reopen_task, get_task, get_all_tags, get_tasks_by_tag,
         add_tags_to_task, remove_tags_from_task, batch_complete_tasks, batch_start_tasks,
         batch_add_tags_to_tasks, export_user_data, import_user_data, set_task_recurrence,
-        get_task_subtasks,
+        get_task_subtasks, get_heartbeat_config, set_heartbeat_config, should_trigger_heartbeat,
+        get_heartbeat_suggestion,
     ]
 
 
