@@ -34,6 +34,7 @@ class Task:
     user_id: str | None
     created_at: datetime
     updated_at: datetime
+    tags: list[str] | None = None
 
 
 @dataclass(frozen=True)

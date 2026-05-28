@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator, Optional
 
 from .logger import get_logger
 from .models import Priority, Task, TaskStatus
@@ -66,10 +67,19 @@ class TaskStore:
         self._init_schema()
         log.info("store opened: %s", self.db_path)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        except sqlite3.Error as e:
+            log.error("database error: %s", e)
+            conn.rollback()
+            raise
+        finally:
+            conn.commit()
+            conn.close()
 
     def _init_schema(self) -> None:
         log.debug("initializing schema")
@@ -110,15 +120,15 @@ class TaskStore:
 
     def login_user(self, user_id: str, password: str) -> str | None:
         from .auth import generate_token, utcnow as auth_now, verify_password
-        row = self._connect().execute(
-            "SELECT password_hash FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
-        if not row:
-            return None
-        if not verify_password(password, row["password_hash"]):
-            return None
-        token = generate_token()
         with self._connect() as conn:
+            row = conn.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            if not row:
+                return None
+            if not verify_password(password, row["password_hash"]):
+                return None
+            token = generate_token()
             conn.execute(
                 "INSERT OR REPLACE INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
                 (token, user_id, encode_dt(auth_now())),
@@ -127,9 +137,10 @@ class TaskStore:
         return token
 
     def validate_session(self, token: str) -> str | None:
-        row = self._connect().execute(
-            "SELECT user_id FROM sessions WHERE token = ?", (token,)
-        ).fetchone()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT user_id FROM sessions WHERE token = ?", (token,)
+            ).fetchone()
         return row["user_id"] if row else None
 
     def logout_user(self, token: str) -> None:
@@ -139,12 +150,12 @@ class TaskStore:
 
     def change_password(self, user_id: str, old_password: str, new_password: str) -> bool:
         from .auth import verify_password, hash_password
-        row = self._connect().execute(
-            "SELECT password_hash FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
-        if not row or not verify_password(old_password, row["password_hash"]):
-            return False
         with self._connect() as conn:
+            row = conn.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            if not row or not verify_password(old_password, row["password_hash"]):
+                return False
             conn.execute(
                 "UPDATE users SET password_hash = ? WHERE id = ?",
                 (hash_password(new_password), user_id),
@@ -153,7 +164,8 @@ class TaskStore:
         return True
 
     def list_users(self) -> list[dict[str, str]]:
-        rows = self._connect().execute("SELECT id, display_name FROM users ORDER BY id").fetchall()
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id, display_name FROM users ORDER BY id").fetchall()
         return [{"id": row["id"], "display_name": row["display_name"]} for row in rows]
 
     # ── tasks ──────────────────────────────────────────────────────
@@ -223,7 +235,8 @@ class TaskStore:
         return [row_to_task(row) for row in rows]
 
     def _get_task(self, task_id: int) -> Task | None:
-        row = self._connect().execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return row_to_task(row) if row else None
 
     def update_status(
@@ -231,6 +244,7 @@ class TaskStore:
     ) -> Task | None:
         now = utcnow()
         log.info("update_status task=%d status=%s user=%r", task_id, status.value, user_id)
+        old_parent_id = None
         with self._connect() as conn:
             if user_id is not None:
                 old = conn.execute(
@@ -239,6 +253,8 @@ class TaskStore:
                 ).fetchone()
             else:
                 old = conn.execute("SELECT parent_task_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if old:
+                old_parent_id = old["parent_task_id"]
             if user_id is not None and old is None:
                 log.warning("update_status: task #%d not owned by %r", task_id, user_id)
                 return None
@@ -258,8 +274,8 @@ class TaskStore:
             )
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         task = row_to_task(row) if row else None
-        if task and status == TaskStatus.DONE and old and old["parent_task_id"]:
-            self._auto_complete_parent(old["parent_task_id"])
+        if task and status == TaskStatus.DONE and old_parent_id:
+            self._auto_complete_parent(old_parent_id)
         return task
 
     def update_task(
@@ -341,9 +357,10 @@ class TaskStore:
             self.update_status(parent_id, TaskStatus.TODO)
 
     def _auto_complete_parent(self, parent_id: int) -> None:
-        children = self._connect().execute(
-            "SELECT * FROM tasks WHERE parent_task_id = ?", (parent_id,)
-        ).fetchall()
+        with self._connect() as conn:
+            children = conn.execute(
+                "SELECT * FROM tasks WHERE parent_task_id = ?", (parent_id,)
+            ).fetchall()
         if children and all(row["status"] == TaskStatus.DONE.value for row in children):
             log.info("auto-completing parent task #%d", parent_id)
             self.update_status(parent_id, TaskStatus.DONE)
@@ -377,15 +394,17 @@ class TaskStore:
             )
 
     def get_memory(self, key: str, user_id: str = DEFAULT_USER) -> str | None:
-        row = self._connect().execute(
-            "SELECT value FROM user_memory WHERE user_id = ? AND key = ?", (user_id, key)
-        ).fetchone()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM user_memory WHERE user_id = ? AND key = ?", (user_id, key)
+            ).fetchone()
         return row["value"] if row else None
 
     def get_all_memory(self, user_id: str = DEFAULT_USER) -> dict[str, str]:
-        rows = self._connect().execute(
-            "SELECT key, value FROM user_memory WHERE user_id = ?", (user_id,)
-        ).fetchall()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM user_memory WHERE user_id = ?", (user_id,)
+            ).fetchall()
         return {row["key"]: row["value"] for row in rows}
 
     # ── search ───────────────────────────────────────────────────────
