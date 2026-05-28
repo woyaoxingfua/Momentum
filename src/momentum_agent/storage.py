@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     recurrence TEXT,
     user_id TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    tags TEXT
 );
 
 CREATE TABLE IF NOT EXISTS user_memory (
@@ -106,6 +107,9 @@ class TaskStore:
         if "user_id" not in cols:
             log.info("migration: adding user_id column")
             conn.execute("ALTER TABLE tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default' REFERENCES users(id)")
+        if "tags" not in cols:
+            log.info("migration: adding tags column")
+            conn.execute("ALTER TABLE tasks ADD COLUMN tags TEXT")
 
     # ── auth ───────────────────────────────────────────────────────
 
@@ -180,18 +184,20 @@ class TaskStore:
         notes: str | None = None,
         parent_task_id: int | None = None,
         recurrence: str | None = None,
+        tags: list[str] | None = None,
         user_id: str = DEFAULT_USER,
     ) -> Task:
         now = utcnow()
         log.info("create_task title=%r user=%r priority=%s", title.strip(), user_id, priority.value)
+        tags_str = _serialize_tags(tags)
         with self._connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO tasks (
                     title, status, priority, due_at, estimated_minutes, notes,
-                    parent_task_id, recurrence, user_id, created_at, updated_at
+                    parent_task_id, recurrence, user_id, created_at, updated_at, tags
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     title.strip(),
@@ -205,6 +211,7 @@ class TaskStore:
                     user_id,
                     encode_dt(now),
                     encode_dt(now),
+                    tags_str,
                 ),
             )
             task_id = int(cursor.lastrowid)
@@ -287,6 +294,7 @@ class TaskStore:
         priority: Priority | None = None,
         estimated_minutes: int | None = None,
         notes: str | None = None,
+        tags: list[str] | None = None,
         user_id: str = DEFAULT_USER,
     ) -> Task | None:
         log.info("update_task id=%d user=%r", task_id, user_id)
@@ -308,6 +316,9 @@ class TaskStore:
         if notes is not None:
             sets.append("notes = ?")
             params.append(notes)
+        if tags is not None:
+            sets.append("tags = ?")
+            params.append(_serialize_tags(tags))
         if not sets:
             return self._get_task(task_id)
         sets.append("updated_at = ?")
@@ -429,6 +440,92 @@ class TaskStore:
                 ).fetchall()
         return [row_to_task(row) for row in rows]
 
+    def get_tasks_by_tag(
+        self, tag: str, *, user_id: str = DEFAULT_USER, status: TaskStatus | None = None
+    ) -> list[Task]:
+        log.info("get_tasks_by_tag tag=%r user=%r", tag, user_id)
+        tag_lower = tag.strip().lower()
+        with self._connect() as conn:
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM tasks WHERE user_id = ? AND status = ? "
+                    "ORDER BY due_at IS NULL, due_at, id",
+                    (user_id, status.value),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM tasks WHERE user_id = ? "
+                    "ORDER BY due_at IS NULL, due_at, id",
+                    (user_id,),
+                ).fetchall()
+        # 内存中过滤标签
+        tasks = [row_to_task(row) for row in rows]
+        return [
+            t for t in tasks
+            if t.tags and any(tag_lower == t_tag.lower() for t_tag in t.tags)
+        ]
+
+    def get_all_tags(self, *, user_id: str = DEFAULT_USER) -> list[str]:
+        log.info("get_all_tags user=%r", user_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT tags FROM tasks WHERE user_id = ? AND tags IS NOT NULL",
+                (user_id,),
+            ).fetchall()
+        all_tags = set()
+        for row in rows:
+            tags = _deserialize_tags(row["tags"])
+            if tags:
+                all_tags.update(tags)
+        return sorted(list(all_tags))
+
+    def batch_update_status(
+        self, task_ids: list[int], status: TaskStatus, *, user_id: str = DEFAULT_USER
+    ) -> int:
+        log.info("batch_update_status task_ids=%r status=%s user=%r", task_ids, status.value, user_id)
+        updated = 0
+        with self._connect() as conn:
+            for task_id in task_ids:
+                result = conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (status.value, encode_dt(utcnow()), task_id, user_id),
+                )
+                if result.rowcount > 0:
+                    updated += 1
+                    conn.execute(
+                        "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                        (task_id, "status_changed", status.value, encode_dt(utcnow())),
+                    )
+        log.info("batch_update_status updated %d tasks", updated)
+        return updated
+
+    def batch_add_tags(
+        self, task_ids: list[int], tags: list[str], *, user_id: str = DEFAULT_USER
+    ) -> int:
+        log.info("batch_add_tags task_ids=%r tags=%r user=%r", task_ids, tags, user_id)
+        updated = 0
+        with self._connect() as conn:
+            for task_id in task_ids:
+                # 获取现有标签
+                row = conn.execute(
+                    "SELECT tags FROM tasks WHERE id = ? AND user_id = ?",
+                    (task_id, user_id),
+                ).fetchone()
+                if row is None:
+                    continue
+                existing_tags = _deserialize_tags(row["tags"]) or []
+                # 合并并去重
+                combined_tags = list(set(existing_tags + tags))
+                new_tags_str = _serialize_tags(combined_tags)
+                # 更新
+                conn.execute(
+                    "UPDATE tasks SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (new_tags_str, encode_dt(utcnow()), task_id, user_id),
+                )
+                updated += 1
+        log.info("batch_add_tags updated %d tasks", updated)
+        return updated
+
     # ── export / import ──────────────────────────────────────────────
 
     def export_user_data(self, user_id: str = DEFAULT_USER) -> dict:
@@ -508,18 +605,51 @@ def _next_recurrence_due(from_date: datetime | None, recurrence: str) -> datetim
     return None
 
 
+def _serialize_tags(tags: list[str] | None) -> str | None:
+    if not tags:
+        return None
+    # 去重、排序并用逗号分隔
+    unique_tags = sorted(list({tag.strip() for tag in tags if tag.strip()}))
+    return ",".join(unique_tags) if unique_tags else None
+
+
+def _deserialize_tags(tags_str: str | None) -> list[str] | None:
+    if not tags_str:
+        return None
+    return [tag.strip() for tag in tags_str.split(",") if tag.strip()]
+
+
 def row_to_task(row: sqlite3.Row | dict[str, Any]) -> Task:
+    # 处理 sqlite3.Row 和 dict 两种情况
+    def get_val(key: str, default: Any = None) -> Any:
+        if isinstance(row, dict):
+            return row.get(key, default)
+        try:
+            return row[key]
+        except (KeyError, IndexError):
+            return default
+
+    def has_key(key: str) -> bool:
+        if isinstance(row, dict):
+            return key in row
+        try:
+            row[key]
+            return True
+        except (KeyError, IndexError):
+            return False
+
     return Task(
-        id=int(row["id"]),
-        title=str(row["title"]),
-        status=TaskStatus(row["status"]),
-        priority=Priority(row["priority"]),
-        due_at=decode_dt(row["due_at"]),
-        estimated_minutes=row["estimated_minutes"],
-        notes=row["notes"],
-        parent_task_id=row["parent_task_id"],
-        recurrence=row["recurrence"] if "recurrence" in row.keys() else None,
-        user_id=row["user_id"] if "user_id" in row.keys() else None,
-        created_at=decode_dt(row["created_at"]) or utcnow(),
-        updated_at=decode_dt(row["updated_at"]) or utcnow(),
+        id=int(get_val("id")),
+        title=str(get_val("title")),
+        status=TaskStatus(get_val("status")),
+        priority=Priority(get_val("priority")),
+        due_at=decode_dt(get_val("due_at")),
+        estimated_minutes=get_val("estimated_minutes"),
+        notes=get_val("notes"),
+        parent_task_id=get_val("parent_task_id"),
+        recurrence=get_val("recurrence") if has_key("recurrence") else None,
+        user_id=get_val("user_id") if has_key("user_id") else None,
+        created_at=decode_dt(get_val("created_at")) or utcnow(),
+        updated_at=decode_dt(get_val("updated_at")) or utcnow(),
+        tags=_deserialize_tags(get_val("tags")),
     )

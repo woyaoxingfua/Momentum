@@ -87,9 +87,13 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 query = parse_qs(parsed.query)
                 if "q" in query:
                     self.handle_search_tasks(query["q"][0], user_id)
+                elif "tag" in query:
+                    self.handle_get_tasks_by_tag(query["tag"][0], user_id)
                 else:
                     status = query.get("status", ["todo"])[0]
                     self.handle_list_tasks(status, user_id)
+            elif parsed.path == "/api/tags":
+                self.handle_get_all_tags(user_id)
             elif parsed.path == "/api/export":
                 self.handle_export(user_id)
             elif parsed.path == "/api/advice":
@@ -150,6 +154,10 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 self.handle_set_config(user_id)
             elif parsed.path == "/api/import":
                 self.handle_import(user_id)
+            elif parsed.path == "/api/batch/status":
+                self.handle_batch_update_status(user_id)
+            elif parsed.path == "/api/batch/tags":
+                self.handle_batch_add_tags(user_id)
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         finally:
@@ -397,6 +405,49 @@ class MomentumHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json({"error": f"导入失败：{exc}"}, HTTPStatus.BAD_REQUEST)
 
+    def handle_get_all_tags(self, user_id: str) -> None:
+        tags = TaskStore(self.db_path).get_all_tags(user_id=user_id)
+        self.send_json({"tags": tags})
+
+    def handle_get_tasks_by_tag(self, tag: str, user_id: str) -> None:
+        tasks = TaskStore(self.db_path).get_tasks_by_tag(tag, user_id=user_id)
+        self.send_json({"tasks": [task_to_json(t) for t in tasks]})
+
+    def handle_batch_update_status(self, user_id: str) -> None:
+        payload = self.read_json()
+        task_ids = payload.get("task_ids", [])
+        status_str = payload.get("status")
+        if not task_ids or not isinstance(task_ids, list) or not status_str:
+            self.send_json({"error": "请提供 task_ids 数组和 status。"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            status = TaskStatus(status_str)
+        except ValueError:
+            self.send_json({"error": "无效的 status。"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            updated = TaskStore(self.db_path).batch_update_status(
+                [int(tid) for tid in task_ids], status, user_id=user_id
+            )
+            self.send_json({"message": f"已更新 {updated} 个任务。"})
+        except Exception as exc:
+            self.send_json({"error": f"批量更新失败：{exc}"}, HTTPStatus.BAD_REQUEST)
+
+    def handle_batch_add_tags(self, user_id: str) -> None:
+        payload = self.read_json()
+        task_ids = payload.get("task_ids", [])
+        tags = payload.get("tags", [])
+        if not task_ids or not isinstance(task_ids, list) or not tags or not isinstance(tags, list):
+            self.send_json({"error": "请提供 task_ids 和 tags 数组。"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            updated = TaskStore(self.db_path).batch_add_tags(
+                [int(tid) for tid in task_ids], tags, user_id=user_id
+            )
+            self.send_json({"message": f"已更新 {updated} 个任务。"})
+        except Exception as exc:
+            self.send_json({"error": f"批量添加标签失败：{exc}"}, HTTPStatus.BAD_REQUEST)
+
     def read_json(self) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0"))
         if length == 0:
@@ -438,6 +489,7 @@ def task_to_json(task: Task) -> dict[str, object]:
         "user_id": task.user_id,
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
+        "tags": task.tags,
     }
 
 
