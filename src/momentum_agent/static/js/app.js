@@ -84,6 +84,7 @@ async function exportData() {
   a.download = "momentum-export.json";
   a.click();
   URL.revokeObjectURL(url);
+  showToast("📤 数据导出成功！");
 }
 
 async function importData(file) {
@@ -96,7 +97,7 @@ async function importData(file) {
     });
     file.target.value = "";
     await refreshAll();
-    showToast("✅ 导入成功！");
+    showToast("✅ 数据导入成功！");
   } catch (err) {
     showToast(`❌ 导入失败：${err.message}`);
   }
@@ -105,6 +106,7 @@ async function importData(file) {
 async function addTask() {
   const text = els.taskInput.value.trim();
   if (!text) return;
+  const originalText = els.addTaskButton.textContent;
   els.addTaskButton.disabled = true;
   els.addTaskButton.textContent = "⏳ 添加中...";
   try {
@@ -116,13 +118,14 @@ async function addTask() {
     showToast(`❌ 添加失败：${err.message}`);
   } finally {
     els.addTaskButton.disabled = false;
-    els.addTaskButton.textContent = "✨ 新增任务";
+    els.addTaskButton.textContent = originalText;
   }
 }
 
 async function planTask() {
   const text = els.taskInput.value.trim();
   if (!text) return;
+  const originalText = els.planTaskButton.textContent;
   els.planTaskButton.disabled = true;
   els.planTaskButton.textContent = "⏳ 拆分中...";
   try {
@@ -134,13 +137,15 @@ async function planTask() {
     showToast(`❌ 计划失败：${err.message}`);
   } finally {
     els.planTaskButton.disabled = false;
-    els.planTaskButton.textContent = "📋 拆成计划";
+    els.planTaskButton.textContent = originalText;
   }
 }
 
 async function loadWeather() {
   try {
     const userCity = localStorage.getItem("momentum_city") || "北京";
+    els.weatherTemp.textContent = "⏳";
+    els.weatherDesc.textContent = "加载中...";
     const response = await fetch(`/api/weather?city=${encodeURIComponent(userCity)}`);
     if (!response.ok) {
       throw new Error("天气加载失败");
@@ -150,8 +155,8 @@ async function loadWeather() {
     els.weatherDesc.textContent = `${weather.condition_cn} | 湿度 ${weather.humidity}% | ${weather.advice}`;
     els.weatherCity.value = userCity;
   } catch (err) {
-    els.weatherTemp.textContent = "❓ --°C";
-    els.weatherDesc.textContent = "天气加载失败，请检查网络";
+    els.weatherTemp.textContent = "❓";
+    els.weatherDesc.textContent = "天气加载失败，请稍后重试";
   }
 }
 
@@ -182,8 +187,7 @@ function loadTheme() {
 }
 
 function showConfetti() {
-  const colors = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7", "#dfe6e9", "#a29bfe"];
-  const emojis = ["🎉", "✨", "🌟", "💫", "⭐", "🎊", "👏"];
+  const emojis = ["🎉", "✨", "🌟", "💫", "⭐", "🎊", "👏", "🎈", "🎁", "💪"];
   
   for (let i = 0; i < 20; i++) {
     const confetti = document.createElement("div");
@@ -213,6 +217,36 @@ function showToast(message) {
   }, 3000);
 }
 
+async function loadAdviceWithLoading() {
+  const originalText = els.adviseButton.textContent;
+  els.adviseButton.disabled = true;
+  els.adviseButton.textContent = "⏳ 加载中...";
+  try {
+    await loadAdvice();
+    showToast("💡 今日建议已更新！");
+  } catch (err) {
+    showToast(`❌ 加载失败：${err.message}`);
+  } finally {
+    els.adviseButton.disabled = false;
+    els.adviseButton.textContent = originalText;
+  }
+}
+
+async function loadReviewWithLoading() {
+  const originalText = els.reviewButton.textContent;
+  els.reviewButton.disabled = true;
+  els.reviewButton.textContent = "⏳ 复盘中...";
+  try {
+    await loadReview();
+    showToast("📊 复盘已更新！");
+  } catch (err) {
+    showToast(`❌ 加载失败：${err.message}`);
+  } finally {
+    els.reviewButton.disabled = false;
+    els.reviewButton.textContent = originalText;
+  }
+}
+
 initTasks(
   { tasks: els.tasks, taskCount: els.taskCount },
   { editDialog: els.editDialog, editTaskId: els.editTaskId, editTitle: els.editTitle,
@@ -229,8 +263,8 @@ initConfig(
 
 els.addTaskButton.addEventListener("click", addTask);
 els.planTaskButton.addEventListener("click", planTask);
-els.adviseButton.addEventListener("click", loadAdvice);
-els.reviewButton.addEventListener("click", loadReview);
+els.adviseButton.addEventListener("click", loadAdviceWithLoading);
+els.reviewButton.addEventListener("click", loadReviewWithLoading);
 els.refreshButton.addEventListener("click", refreshAll);
 els.chatForm.addEventListener("submit", sendChat);
 els.taskInput.addEventListener("keydown", (event) => {

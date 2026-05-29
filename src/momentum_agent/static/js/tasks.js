@@ -43,7 +43,7 @@ function renderTaskCard(task) {
     : "";
 
   return `
-    <article class="task ${task.parent_task_id ? "subtask" : ""} ${task.status !== "todo" ? `task-${task.status}` : ""}">
+    <article class="task ${task.parent_task_id ? "task-subtask" : ""} ${task.status !== "todo" ? `task-${task.status}` : ""} ${task.priority === "high" ? "task-high" : ""}" data-task-id="${task.id}">
       <div>
         <div class="task-title">${escapeHtml(task.title)}</div>
         <div class="task-meta">
@@ -64,18 +64,18 @@ function renderTaskCard(task) {
 
 function actionButtons(task) {
   const buttons = [];
-  buttons.push(`<button data-edit="${task.id}" title="编辑">编辑</button>`);
+  buttons.push(`<button data-edit="${task.id}" title="编辑">✏️ 编辑</button>`);
 
   if (task.status === "todo") {
-    buttons.push(`<button data-start="${task.id}" title="开始做">开始</button>`);
-    buttons.push(`<button data-done="${task.id}" title="完成">完成</button>`);
-    buttons.push(`<button data-postpone="${task.id}" title="推迟">推迟</button>`);
-    buttons.push(`<button data-drop="${task.id}" title="放弃">放弃</button>`);
+    buttons.push(`<button data-start="${task.id}" title="开始做">▶️ 开始</button>`);
+    buttons.push(`<button data-done="${task.id}" title="完成">✅ 完成</button>`);
+    buttons.push(`<button data-postpone="${task.id}" title="推迟">⏰ 推迟</button>`);
+    buttons.push(`<button data-drop="${task.id}" title="放弃">❌ 放弃</button>`);
   } else if (task.status === "doing") {
-    buttons.push(`<button data-done="${task.id}" title="完成">完成</button>`);
-    buttons.push(`<button data-drop="${task.id}" title="放弃">放弃</button>`);
+    buttons.push(`<button data-done="${task.id}" title="完成">✅ 完成</button>`);
+    buttons.push(`<button data-drop="${task.id}" title="放弃">❌ 放弃</button>`);
   } else {
-    buttons.push(`<button data-reopen="${task.id}" title="重新打开">重开</button>`);
+    buttons.push(`<button data-reopen="${task.id}" title="重新打开">🔄 重开</button>`);
   }
 
   return buttons.join("");
@@ -84,8 +84,19 @@ function actionButtons(task) {
 function bindTaskButtons() {
   document.querySelectorAll("[data-start]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      await requestJson(`/api/tasks/${btn.dataset.start}/start`, { method: "POST" });
-      await loadTasks();
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳";
+      try {
+        await requestJson(`/api/tasks/${btn.dataset.start}/start`, { method: "POST" });
+        await loadTasks();
+        showToast("▶️ 已开始任务！");
+      } catch (err) {
+        showToast(`❌ 操作失败：${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     });
   });
 
@@ -95,14 +106,24 @@ function bindTaskButtons() {
       if (taskCard) {
         taskCard.classList.add("task-completing");
       }
-      
-      await requestJson(`/api/tasks/${btn.dataset.done}/done`, { method: "POST" });
-      
-      if (typeof showConfetti === "function") {
-        setTimeout(() => showConfetti(), 300);
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳";
+      try {
+        await requestJson(`/api/tasks/${btn.dataset.done}/done`, { method: "POST" });
+        
+        if (typeof window.showConfetti === "function") {
+          setTimeout(() => window.showConfetti(), 300);
+        }
+        
+        await loadTasks();
+        showToast("✅ 任务已完成！");
+      } catch (err) {
+        showToast(`❌ 操作失败：${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
       }
-      
-      await loadTasks();
     });
   });
 
@@ -112,25 +133,58 @@ function bindTaskButtons() {
 
   document.querySelectorAll("[data-postpone]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      await requestJson(`/api/tasks/${btn.dataset.postpone}/postpone`, {
-        method: "POST", body: JSON.stringify({ days: 3 }),
-      });
-      await loadTasks();
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳";
+      try {
+        await requestJson(`/api/tasks/${btn.dataset.postpone}/postpone`, {
+          method: "POST", body: JSON.stringify({ days: 3 }),
+        });
+        await loadTasks();
+        showToast("⏰ 已推迟任务！");
+      } catch (err) {
+        showToast(`❌ 操作失败：${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     });
   });
 
   document.querySelectorAll("[data-drop]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (!confirm("确定要放弃这个任务吗？")) return;
-      await requestJson(`/api/tasks/${btn.dataset.drop}/drop`, { method: "POST" });
-      await loadTasks();
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳";
+      try {
+        await requestJson(`/api/tasks/${btn.dataset.drop}/drop`, { method: "POST" });
+        await loadTasks();
+        showToast("❌ 已放弃任务！");
+      } catch (err) {
+        showToast(`❌ 操作失败：${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     });
   });
 
   document.querySelectorAll("[data-reopen]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      await requestJson(`/api/tasks/${btn.dataset.reopen}/reopen`, { method: "POST" });
-      await loadTasks();
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳";
+      try {
+        await requestJson(`/api/tasks/${btn.dataset.reopen}/reopen`, { method: "POST" });
+        await loadTasks();
+        showToast("🔄 已重新打开任务！");
+      } catch (err) {
+        showToast(`❌ 操作失败：${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     });
   });
 }
@@ -159,17 +213,30 @@ export async function saveEdit(event) {
     tags = tagsStr.split(",").map(t => t.trim()).filter(t => t);
   }
   
-  const body = {
-    title: els.editTitle.value.trim(),
-    due_at: els.editDue.value || null,
-    priority: els.editPriority.value,
-    estimated_minutes: els.editEstimate.value ? Number(els.editEstimate.value) : null,
-    tags,
-    notes: els.editNotes.value.trim() || null,
-  };
-  await requestJson(`/api/tasks/${els.editTaskId.value}`, { method: "PUT", body: JSON.stringify(body) });
-  els.editDialog.close();
-  await loadTasks();
+  const saveBtn = els.editDialog.querySelector('button[type="submit"]');
+  const originalText = saveBtn.textContent;
+  saveBtn.disabled = true;
+  saveBtn.textContent = "⏳ 保存中...";
+  
+  try {
+    const body = {
+      title: els.editTitle.value.trim(),
+      due_at: els.editDue.value || null,
+      priority: els.editPriority.value,
+      estimated_minutes: els.editEstimate.value ? Number(els.editEstimate.value) : null,
+      tags,
+      notes: els.editNotes.value.trim() || null,
+    };
+    await requestJson(`/api/tasks/${els.editTaskId.value}`, { method: "PUT", body: JSON.stringify(body) });
+    els.editDialog.close();
+    await loadTasks();
+    showToast("✅ 任务已保存！");
+  } catch (err) {
+    showToast(`❌ 保存失败：${err.message}`);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = originalText;
+  }
 }
 
 export async function loadTasks() {
@@ -198,4 +265,10 @@ function orderTasks(tasks) {
     .forEach((t) => ordered.push(t));
 
   return ordered;
+}
+
+function showToast(message) {
+  if (typeof window.showToast === "function") {
+    window.showToast(message);
+  }
 }

@@ -31,6 +31,7 @@ from .logger import get_logger, init_from_env
 from .models import Priority, Task, TaskStatus
 from .storage import TaskStore
 from .context import build_user_context, heartbeat_suggestion
+from .smart_tools import get_weather
 
 log = get_logger("web")
 
@@ -77,6 +78,13 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 else:
                     name = parsed.path.split("/")[-1]
                     self.send_static(f"js/{name}", "text/javascript; charset=utf-8")
+                return
+
+            # Weather API - no auth required (public endpoint)
+            if parsed.path == "/api/weather":
+                query = parse_qs(parsed.query)
+                city = query.get("city", ["北京"])[0]
+                self.handle_get_weather(city)
                 return
 
             # API endpoints — require auth
@@ -199,6 +207,10 @@ class MomentumHandler(BaseHTTPRequestHandler):
         self._last_status = status.value
         super().send_error(status)
 
+    def handle_get_weather(self, city: str) -> None:
+        weather = get_weather(city)
+        self.send_json(weather)
+
     def handle_list_tasks(self, status: str, user_id: str) -> None:
         chosen = TaskStatus(status) if status in TaskStatus._value2member_map_ else TaskStatus.TODO
         tasks = TaskStore(self.db_path).list_tasks(chosen, user_id=user_id)
@@ -248,7 +260,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
             TaskStore(self.db_path), task_id,
             title=payload.get("title"), due_at=payload.get("due_at"),
             priority=payload.get("priority"), estimated_minutes=payload.get("estimated_minutes"),
-            notes=payload.get("notes"), tags=payload.get("tags"), user_id=user_id,
+            tags=payload.get("tags"), notes=payload.get("notes"), user_id=user_id,
         )
         self.send_json({"message": message})
 
