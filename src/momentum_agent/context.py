@@ -110,6 +110,43 @@ def task_score(task: Task, context: UserContext) -> int:
     return score
 
 
+def _analyze_tasks(tasks: list[Task], context: UserContext) -> tuple[list[Task], list[Task], list[Task], Task, int]:
+    """Helper function to analyze tasks and return common results.
+    
+    Returns:
+        (overdue_tasks, due_today_tasks, doing_tasks, next_task, todo_count)
+    """
+    overdue = [task for task in tasks if task.due_at and task.due_at < context.now]
+    due_today = [
+        task for task in tasks 
+        if task.due_at and task.due_at.date() == context.now.date()
+    ]
+    doing_tasks = [task for task in tasks if task.status.value == "doing"]
+    next_task = ranked_tasks(tasks, context)[0]
+    todo_count = len([t for t in tasks if t.status.value == "todo"])
+    return overdue, due_today, doing_tasks, next_task, todo_count
+
+
+def _get_time_greeting(hour: int) -> str:
+    """Get a time-appropriate greeting."""
+    if hour < 12:
+        return "☀️ 早上好！"
+    elif hour < 17:
+        return "🌤️ 下午好！"
+    else:
+        return "🌙 晚上好！"
+
+
+def _get_energy_suggestion(energy: str) -> str:
+    """Get an energy-based suggestion."""
+    if energy == "high":
+        return "现在精力正好，适合处理有挑战的任务！"
+    elif energy == "medium":
+        return "当前状态不错，保持节奏就好。"
+    else:
+        return "累了就先休息，或者选个 15 分钟的轻松小任务。"
+
+
 def daily_review(tasks: list[Task], context: UserContext) -> str:
     if not tasks:
         return "今天没有开放任务。建议补一个最重要的小目标，控制在 30 分钟内。"
@@ -152,26 +189,9 @@ def heartbeat_suggestion(tasks: list[Task], context: UserContext) -> str:
             "要不要花 2 分钟创建一个今天最想推进的小任务？"
         )
 
-    overdue = [task for task in tasks if task.due_at and task.due_at < context.now]
-    due_today = [
-        task
-        for task in tasks
-        if task.due_at and task.due_at.date() == context.now.date()
-    ]
-    doing_tasks = [task for task in tasks if task.status.value == "doing"]
-    ranked = ranked_tasks(tasks, context)
-    next_task = ranked[0]
+    overdue, due_today, doing_tasks, next_task, todo_count = _analyze_tasks(tasks, context)
 
-    hour = context.now.hour
-    
-    # Time-based greetings
-    if hour < 12:
-        greeting = "☀️ 早上好！"
-    elif hour < 17:
-        greeting = "🌤️ 下午好！"
-    else:
-        greeting = "🌙 晚上好！"
-
+    greeting = _get_time_greeting(context.now.hour)
     suggestions = []
     
     # Different suggestion strategies
@@ -202,15 +222,9 @@ def heartbeat_suggestion(tasks: list[Task], context: UserContext) -> str:
         )
     
     # Add energy-based suggestion
-    if context.energy == "high":
-        suggestions.append("现在精力正好，适合处理有挑战的任务！")
-    elif context.energy == "medium":
-        suggestions.append("当前状态不错，保持节奏就好。")
-    else:
-        suggestions.append("累了就先休息，或者选个 15 分钟的轻松小任务。")
+    suggestions.append(_get_energy_suggestion(context.energy))
     
     # Add task count summary
-    todo_count = len([t for t in tasks if t.status.value == "todo"])
     if todo_count > 5:
         suggestions.append(f"有 {todo_count} 个待办，别着急，一个一个来。")
     elif todo_count == 0:

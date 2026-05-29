@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator, Optional
 
+from .auth import hash_password, generate_token, verify_password
 from .logger import get_logger
 from .models import Priority, Task, TaskStatus
 
@@ -74,12 +76,12 @@ class TaskStore:
         conn.row_factory = sqlite3.Row
         try:
             yield conn
+            conn.commit()
         except sqlite3.Error as e:
             log.error("database error: %s", e)
             conn.rollback()
             raise
         finally:
-            conn.commit()
             conn.close()
 
     def _init_schema(self) -> None:
@@ -90,7 +92,6 @@ class TaskStore:
             self._ensure_default_user(conn)
 
     def _ensure_default_user(self, conn: sqlite3.Connection) -> None:
-        from .auth import hash_password
         existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if existing == 0:
             conn.execute(
@@ -114,16 +115,14 @@ class TaskStore:
     # ── auth ───────────────────────────────────────────────────────
 
     def register_user(self, user_id: str, display_name: str, password_hash: str) -> None:
-        from .auth import utcnow as auth_now
         log.info("register user=%r", user_id)
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO users (id, display_name, password_hash, created_at) VALUES (?, ?, ?, ?)",
-                (user_id, display_name, password_hash, encode_dt(auth_now())),
+                (user_id, display_name, password_hash, encode_dt(utcnow())),
             )
 
     def login_user(self, user_id: str, password: str) -> str | None:
-        from .auth import generate_token, utcnow as auth_now, verify_password
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT password_hash FROM users WHERE id = ?", (user_id,)
@@ -135,7 +134,7 @@ class TaskStore:
             token = generate_token()
             conn.execute(
                 "INSERT OR REPLACE INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
-                (token, user_id, encode_dt(auth_now())),
+                (token, user_id, encode_dt(utcnow())),
             )
         log.info("login user=%r", user_id)
         return token
@@ -153,7 +152,6 @@ class TaskStore:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
     def change_password(self, user_id: str, old_password: str, new_password: str) -> bool:
-        from .auth import verify_password, hash_password
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT password_hash FROM users WHERE id = ?", (user_id,)
@@ -445,20 +443,28 @@ class TaskStore:
     ) -> list[Task]:
         log.info("get_tasks_by_tag tag=%r user=%r", tag, user_id)
         tag_lower = tag.strip().lower()
+        # 使用 SQL LIKE 查询来过滤标签，减少内存开销
+        # 查找包含该标签的任务
+        like1 = f"%,{tag_lower},%"
+        like2 = f"{tag_lower},%"
+        like3 = f"%,{tag_lower}"
+        like4 = tag_lower
         with self._connect() as conn:
             if status:
                 rows = conn.execute(
-                    "SELECT * FROM tasks WHERE user_id = ? AND status = ? "
-                    "ORDER BY due_at IS NULL, due_at, id",
-                    (user_id, status.value),
+                    "SELECT * FROM tasks WHERE user_id = ? AND status = ? AND ("
+                    "LOWER(tags) = ? OR LOWER(tags) LIKE ? OR LOWER(tags) LIKE ? OR LOWER(tags) LIKE ?"
+                    ") ORDER BY due_at IS NULL, due_at, id",
+                    (user_id, status.value, like4, like1, like2, like3),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM tasks WHERE user_id = ? "
-                    "ORDER BY due_at IS NULL, due_at, id",
-                    (user_id,),
+                    "SELECT * FROM tasks WHERE user_id = ? AND ("
+                    "LOWER(tags) = ? OR LOWER(tags) LIKE ? OR LOWER(tags) LIKE ? OR LOWER(tags) LIKE ?"
+                    ") ORDER BY due_at IS NULL, due_at, id",
+                    (user_id, like4, like1, like2, like3),
                 ).fetchall()
-        # 内存中过滤标签
+        # 为了确保正确性，仍然在内存中做精确匹配（因为 LIKE 可能匹配到部分）
         tasks = [row_to_task(row) for row in rows]
         return [
             t for t in tasks
@@ -483,19 +489,26 @@ class TaskStore:
         self, task_ids: list[int], status: TaskStatus, *, user_id: str = DEFAULT_USER
     ) -> int:
         log.info("batch_update_status task_ids=%r status=%s user=%r", task_ids, status.value, user_id)
+        if not task_ids:
+            return 0
+        now = utcnow()
+        now_str = encode_dt(now)
         updated = 0
         with self._connect() as conn:
+            # 使用批量查询来更新
+            placeholders = ", ".join("?" for _ in task_ids)
+            params = [status.value, now_str] + task_ids + [user_id]
+            result = conn.execute(
+                f"UPDATE tasks SET status = ?, updated_at = ? WHERE id IN ({placeholders}) AND user_id = ?",
+                params,
+            )
+            updated = result.rowcount
+            # 插入事件
             for task_id in task_ids:
-                result = conn.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-                    (status.value, encode_dt(utcnow()), task_id, user_id),
+                conn.execute(
+                    "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                    (task_id, "status_changed", status.value, now_str),
                 )
-                if result.rowcount > 0:
-                    updated += 1
-                    conn.execute(
-                        "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
-                        (task_id, "status_changed", status.value, encode_dt(utcnow())),
-                    )
         log.info("batch_update_status updated %d tasks", updated)
         return updated
 
@@ -503,24 +516,28 @@ class TaskStore:
         self, task_ids: list[int], tags: list[str], *, user_id: str = DEFAULT_USER
     ) -> int:
         log.info("batch_add_tags task_ids=%r tags=%r user=%r", task_ids, tags, user_id)
+        if not task_ids or not tags:
+            return 0
+        now = utcnow()
+        now_str = encode_dt(now)
         updated = 0
         with self._connect() as conn:
-            for task_id in task_ids:
-                # 获取现有标签
-                row = conn.execute(
-                    "SELECT tags FROM tasks WHERE id = ? AND user_id = ?",
-                    (task_id, user_id),
-                ).fetchone()
-                if row is None:
-                    continue
+            # 一次性获取所有需要更新的任务的标签
+            placeholders = ", ".join("?" for _ in task_ids)
+            params = task_ids + [user_id]
+            rows = conn.execute(
+                f"SELECT id, tags FROM tasks WHERE id IN ({placeholders}) AND user_id = ?",
+                params,
+            ).fetchall()
+            # 逐一更新
+            for row in rows:
                 existing_tags = _deserialize_tags(row["tags"]) or []
                 # 合并并去重
-                combined_tags = list(set(existing_tags + tags))
+                combined_tags = list({t.strip() for t in existing_tags + tags if t.strip()})
                 new_tags_str = _serialize_tags(combined_tags)
-                # 更新
                 conn.execute(
                     "UPDATE tasks SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-                    (new_tags_str, encode_dt(utcnow()), task_id, user_id),
+                    (new_tags_str, now_str, row["id"], user_id),
                 )
                 updated += 1
         log.info("batch_add_tags updated %d tasks", updated)
@@ -587,7 +604,6 @@ class TaskStore:
         """
         config_str = self.get_memory("heartbeat_config", user_id=user_id)
         if config_str:
-            import json
             try:
                 return json.loads(config_str)
             except json.JSONDecodeError:
@@ -629,7 +645,6 @@ class TaskStore:
         if interval_hours is not None:
             config["interval_hours"] = max(1, min(24, interval_hours))
         
-        import json
         self.set_memory("heartbeat_config", json.dumps(config), user_id=user_id)
         return config
 
@@ -641,7 +656,6 @@ class TaskStore:
         """
         config = self.get_heartbeat_config(user_id=user_id)
         config["last_heartbeat_at"] = utcnow().isoformat()
-        import json
         self.set_memory("heartbeat_config", json.dumps(config), user_id=user_id)
         return config
 
