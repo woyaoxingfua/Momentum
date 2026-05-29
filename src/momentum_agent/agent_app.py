@@ -628,17 +628,58 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         return suggestion
 
     @function_tool
-    def get_current_weather(city: str = "北京") -> dict:
-        """Get current weather information for a city.
+    def set_user_location(city: str) -> str:
+        """Set your default location/city for weather queries.
         
         Args:
             city: City name in Chinese or English (e.g., "北京", "上海", "Tokyo", "New York")
+            
+        Returns:
+            Confirmation message
+        """
+        store.set_memory("user_location", city, user_id=user_id)
+        return f"✅ 已设置默认位置为：{city}"
+    
+    @function_tool
+    def get_user_location() -> dict:
+        """Get your saved default location.
+        
+        Returns:
+            Current saved location info
+        """
+        city = store.get_memory("user_location", user_id=user_id)
+        if not city:
+            return {
+                "city": "北京",
+                "is_default": True,
+                "message": "还未设置默认位置，当前使用默认位置：北京"
+            }
+        return {
+            "city": city,
+            "is_default": False,
+            "message": f"当前保存的位置是：{city}"
+        }
+    
+    @function_tool
+    def get_current_weather(city: str | None = None) -> dict:
+        """Get current weather information.
+        
+        Args:
+            city: Optional city name (if not provided, uses your saved default location)
             
         Returns:
             Weather information including temperature, condition, humidity, and recommendations
         """
         import random
         from datetime import datetime
+        
+        # If no city provided, use user's saved location
+        if not city:
+            saved_city = store.get_memory("user_location", user_id=user_id)
+            if saved_city:
+                city = saved_city
+            else:
+                city = "北京"
         
         city_data = {
             "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国", "tz": "Asia/Shanghai"},
@@ -704,15 +745,23 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         }
 
     @function_tool
-    def get_location_info(city: str = "北京") -> dict:
-        """Get location and map information for a city.
+    def get_location_info(city: str | None = None) -> dict:
+        """Get location and map information.
         
         Args:
-            city: City name in Chinese or English
+            city: Optional city name (if not provided, uses your saved default location)
             
         Returns:
             Location information including coordinates, country, and map URLs
         """
+        # If no city provided, use user's saved location
+        if not city:
+            saved_city = store.get_memory("user_location", user_id=user_id)
+            if saved_city:
+                city = saved_city
+            else:
+                city = "北京"
+        
         city_data = {
             "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国"},
             "上海": {"lat": 31.2304, "lon": 121.4737, "country": "中国"},
@@ -745,18 +794,26 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         }
 
     @function_tool
-    def plan_outdoor_activity(city: str, activity: str, target_date: str | None = None) -> str:
+    def plan_outdoor_activity(activity: str, city: str | None = None, target_date: str | None = None) -> str:
         """Plan an outdoor activity with weather considerations.
         
         Args:
-            city: City for the activity
             activity: Description of the outdoor activity (e.g., "跑步", "野餐", "徒步")
+            city: Optional city for the activity (if not provided, uses your saved default location)
             target_date: Optional date in YYYY-MM-DD format
             
         Returns:
             Recommendation based on weather conditions
         """
         import random
+        
+        # If no city provided, use user's saved location
+        if not city:
+            saved_city = store.get_memory("user_location", user_id=user_id)
+            if saved_city:
+                city = saved_city
+            else:
+                city = "北京"
         
         city_data = {
             "北京": {"country": "中国"},
@@ -806,12 +863,12 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         
         if is_good_weather:
             rec = f"✅ 天气不错！「{activity}」适合进行\n"
-            rec += f"{emoji} {condition_cn}，{temp}°C\n"
+            rec += f"📍 {city} | {emoji} {condition_cn}，{temp}°C\n"
             if recommendations:
                 rec += "💡 " + "；".join(recommendations)
         else:
             rec = f"⚠️ 建议重新考虑「{activity}」\n"
-            rec += f"{emoji} {condition_cn}，{temp}°C\n"
+            rec += f"📍 {city} | {emoji} {condition_cn}，{temp}°C\n"
             if recommendations:
                 rec += "💡 " + "；".join(recommendations)
             rec += "\n建议改为室内活动或改期"
@@ -825,7 +882,8 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         add_tags_to_task, remove_tags_from_task, batch_complete_tasks, batch_start_tasks,
         batch_add_tags_to_tasks, export_user_data, import_user_data, set_task_recurrence,
         get_task_subtasks, get_heartbeat_config, set_heartbeat_config, should_trigger_heartbeat,
-        get_heartbeat_suggestion, get_current_weather, get_location_info, plan_outdoor_activity,
+        get_heartbeat_suggestion, set_user_location, get_user_location, get_current_weather, 
+        get_location_info, plan_outdoor_activity,
     ]
 
 

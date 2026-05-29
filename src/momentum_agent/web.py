@@ -99,6 +99,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 self.handle_get_heartbeat_config(user_id)
             elif parsed.path == "/api/heartbeat/suggestion":
                 self.handle_get_heartbeat_suggestion(user_id)
+            elif parsed.path == "/api/user/location":
+                self.handle_get_user_location(user_id)
             elif parsed.path == "/api/weather":
                 self.handle_get_weather(user_id, parsed)
             elif parsed.path == "/api/location":
@@ -169,6 +171,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 self.handle_batch_update_status(user_id)
             elif parsed.path == "/api/batch/tags":
                 self.handle_batch_add_tags(user_id)
+            elif parsed.path == "/api/user/location":
+                self.handle_set_user_location(user_id)
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         finally:
@@ -495,7 +499,15 @@ class MomentumHandler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs
         
         query = parse_qs(parsed.query)
-        city = query.get("city", ["北京"])[0]
+        city = query.get("city", [None])[0]
+        
+        # If no city provided, use user's saved location
+        if not city:
+            saved_city = TaskStore(self.db_path).get_memory("user_location", user_id=user_id)
+            if saved_city:
+                city = saved_city
+            else:
+                city = "北京"
         
         city_data = {
             "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国"},
@@ -564,7 +576,15 @@ class MomentumHandler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs
         
         query = parse_qs(parsed.query)
-        city = query.get("city", ["北京"])[0]
+        city = query.get("city", [None])[0]
+        
+        # If no city provided, use user's saved location
+        if not city:
+            saved_city = TaskStore(self.db_path).get_memory("user_location", user_id=user_id)
+            if saved_city:
+                city = saved_city
+            else:
+                city = "北京"
         
         city_data = {
             "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国"},
@@ -595,6 +615,34 @@ class MomentumHandler(BaseHTTPRequestHandler):
             "openstreetmap_url": f"https://www.openstreetmap.org/?mlat={info['lat']}&mlon={info['lon']}#map=12/{info['lat']}/{info['lon']}",
             "google_maps_url": f"https://www.google.com/maps?q={info['lat']},{info['lon']}",
             "bing_maps_url": f"https://www.bing.com/maps?cp={info['lat']}~{info['lon']}&lvl=12",
+        })
+    
+    def handle_get_user_location(self, user_id: str) -> None:
+        city = TaskStore(self.db_path).get_memory("user_location", user_id=user_id)
+        if not city:
+            self.send_json({
+                "city": "北京",
+                "is_default": True,
+                "message": "还未设置默认位置，当前使用默认位置：北京"
+            })
+        else:
+            self.send_json({
+                "city": city,
+                "is_default": False,
+                "message": f"当前保存的位置是：{city}"
+            })
+    
+    def handle_set_user_location(self, user_id: str) -> None:
+        payload = self.read_json()
+        city = payload.get("city")
+        if not city:
+            self.send_json({"error": "需要提供城市名称"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        TaskStore(self.db_path).set_memory("user_location", city, user_id=user_id)
+        self.send_json({
+            "message": f"已设置默认位置为：{city}",
+            "city": city
         })
 
     def read_json(self) -> dict[str, object]:
