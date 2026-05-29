@@ -12,6 +12,11 @@ from .models import ParsedTaskOutput, PlanOutput, Priority, TaskStatus
 from .parser import ParsedTask, parse_task_text
 from .planner import create_task_plan
 from .storage import TaskStore
+from .smart_tools import (
+    get_weather, get_weather_forecast, get_location_info, 
+    suggest_task_based_on_weather, format_weather_response, 
+    format_forecast_response
+)
 
 log = get_logger("agent")
 
@@ -627,6 +632,84 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         store.update_last_heartbeat(user_id=user_id)
         return suggestion
 
+    @function_tool
+    def get_current_weather(city: str) -> str:
+        """Get current weather information for a city.
+        
+        Args:
+            city: City name (e.g., "北京", "上海", "广州")
+            
+        Returns:
+            Formatted weather information including temperature, conditions, humidity, etc.
+        """
+        weather = get_weather(city)
+        return format_weather_response(weather)
+
+    @function_tool
+    def get_weather_forecast_tool(city: str, days: int = 3) -> str:
+        """Get weather forecast for a city for the next N days.
+        
+        Args:
+            city: City name
+            days: Number of days to forecast (1-7, default 3)
+            
+        Returns:
+            Formatted weather forecast
+        """
+        forecast = get_weather_forecast(city, days)
+        return format_forecast_response(forecast)
+
+    @function_tool
+    def get_location(city: str) -> dict:
+        """Get location information for a city including coordinates and map link.
+        
+        Args:
+            city: City name
+            
+        Returns:
+            Location data with coordinates, timezone, and OpenStreetMap link
+        """
+        return get_location_info(city)
+
+    @function_tool
+    def get_weather_based_suggestions(city: str) -> dict:
+        """Get task suggestions based on current weather in a city.
+        
+        Args:
+            city: City name
+            
+        Returns:
+            Weather-based suggestions including task ideas and urgency level
+        """
+        return suggest_task_based_on_weather(city)
+
+    @function_tool
+    def plan_outdoor_activity(city: str, activity: str) -> str:
+        """Plan an outdoor activity with weather considerations.
+        
+        Args:
+            city: City where the activity will take place
+            activity: Description of the outdoor activity
+            
+        Returns:
+            Planning advice including weather suitability and alternative suggestions
+        """
+        weather_suggestions = suggest_task_based_on_weather(city)
+        weather = weather_suggestions["weather"]
+        
+        if weather_suggestions["urgency"] == "high":
+            return (
+                f"⚠️ **建议重新安排「{activity}」**\n"
+                f"{weather['emoji']} 当前{weather['city']}天气：{weather['condition_cn']}，{weather['temperature']}°C\n"
+                f"建议：{weather_suggestions['recommendation']}"
+            )
+        else:
+            return (
+                f"✅ **「{activity}」适合进行**\n"
+                f"{weather['emoji']} 当前{weather['city']}天气：{weather['condition_cn']}，{weather['temperature']}°C\n"
+                f"建议：{weather_suggestions['suggestions'][0]}"
+            )
+
     return [
         create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context,
         complete_task, start_task, drop_task, postpone_task, search_tasks, edit_task,
@@ -635,6 +718,8 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         batch_add_tags_to_tasks, export_user_data, import_user_data, set_task_recurrence,
         get_task_subtasks, get_heartbeat_config, set_heartbeat_config, should_trigger_heartbeat,
         get_heartbeat_suggestion,
+        get_current_weather, get_weather_forecast_tool, get_location, 
+        get_weather_based_suggestions, plan_outdoor_activity,
     ]
 
 
@@ -686,7 +771,7 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 
     return Agent(
         name="Momentum",
-        instructions=f"""你是 **Momentum**，不是聊天机器人，是一个有自主判断力的任务伙伴。
+        instructions=f"""你是 **Momentum**，不是聊天机器人，是一个有自主判断力的任务伙伴，还懂天气和位置！
 
 ## 你的工作方式：三步循环
 
@@ -695,6 +780,8 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 ### 第一步：观察 + 思考（必须先做）
 不要急着回复！先用工具搞清楚状况：
 - 用户说"hi"/"早"/开场白 → 拉 list_tasks + get_user_context + get_daily_review（可以同时调）
+- 用户提到天气 → 用 get_current_weather 查询
+- 用户提到户外活动 → 用 get_weather_based_suggestions 或 plan_outdoor_activity
 - 用户提到某个任务 → search_tasks 找到它
 - 用户说做了某事 → 先 search_tasks 确认是哪个任务，再 complete_task
 - 用户情绪低/说忙/说累 → 拉 get_user_context 了解状态
@@ -708,18 +795,23 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 - 需要开始的 → start_task
 - 确认放弃的 → drop_task
 - 需要推迟的 → postpone_task
+- 查询天气 → get_current_weather 或 get_weather_forecast_tool
+- 规划户外活动 → plan_outdoor_activity
+- 位置查询 → get_location
 
 ### 第三步：反馈（告诉用户你做了什么，然后主动建议下一步）
 - 列出你刚才做的操作
 - 指出当前最该关注的一件事
 - 如果发现异常（过期/堆积/长期没进展），主动提醒
+- 如果天气相关，主动建议任务调整
 
-## 工具清单（14 个）
+## 工具清单（完整）
 
-**总览：** get_overview — 一次拿到全部状态、过期数、即将到期数、前 3 优先级任务
-**查询：** list_tasks, search_tasks, get_daily_review, get_user_context
-**操作：** create_task, create_plan, edit_task, start_task, complete_task, drop_task, postpone_task
-**记忆：** save_note, get_my_notes
+**任务管理：** create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context, edit_task, search_tasks, start_task, complete_task, drop_task, postpone_task, save_note, get_my_notes, reopen_task, get_task, get_all_tags, get_tasks_by_tag, add_tags_to_task, remove_tags_from_task, batch_complete_tasks, batch_start_tasks, batch_add_tags_to_tasks, export_user_data, import_user_data, set_task_recurrence, get_task_subtasks
+
+**心跳功能：** get_heartbeat_config, set_heartbeat_config, should_trigger_heartbeat, get_heartbeat_suggestion
+
+**天气和地图：** get_current_weather, get_weather_forecast_tool, get_location, get_weather_based_suggestions, plan_outdoor_activity
 
 ## 必须主动做的事
 
@@ -729,12 +821,23 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 4. **记住重要信息** — 用户说了偏好/习惯/目标 → save_note，下次对话用 get_my_notes 回顾
 5. **并行调工具** — get_overview + get_user_context + get_daily_review 可以一次同时调
 6. **模式识别** — 如果你注意到：某任务被反复推迟 → 建议拆分；每天都说"忙" → 建议减少任务量；过期任务堆积 → 建议集中清理
+7. **天气相关建议** — 用户提到户外活动/计划时，主动查天气并给出建议
+8. **标签功能** — 任务有标签需求时，用 add_tags_to_task 和 get_tasks_by_tag
+
+## 新功能：天气与地图
+
+- **天气查询**：用户问天气时，用 get_current_weather 查询
+- **天气预报**：用户问未来天气，用 get_weather_forecast_tool
+- **户外活动建议**：用户计划户外活动，用 plan_outdoor_activity 评估可行性
+- **天气驱动建议**：根据天气主动调整任务安排（下雨建议室内，晴天推荐户外）
+- **位置地图**：用户问地点，用 get_location 返回坐标和地图链接
 
 ## 沟通风格
 - 中文，像朋友聊天，不机器人腔
 - 轻量 Markdown 让信息清晰
 - 做了操作要报告，没做操作要说明为什么不
 - 信息不足就追问一句，别猜
+- 用 emoji 让天气信息更直观（☀️🌧️❄️ 等）
 
 ## 状态
 时间：{now_str}
