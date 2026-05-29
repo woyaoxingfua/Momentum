@@ -51,6 +51,8 @@ const els = {
   refreshWeather: document.querySelector("#refreshWeather"),
   weatherCity: document.querySelector("#weatherCity"),
   themeToggle: document.querySelector("#themeToggle"),
+  coachToggle: document.querySelector("#coachToggle"),
+  coach: document.querySelector("#coach"),
 };
 
 async function loadProvider() {
@@ -186,6 +188,10 @@ function loadTheme() {
   els.themeToggle.innerHTML = savedTheme === "dark" ? "&#9788;" : "&#9790;";
 }
 
+function toggleCoach() {
+  els.coach.classList.toggle("open");
+}
+
 function showConfetti() {
   const emojis = ["&#10024;", "&#10047;", "&#10048;", "&#10083;", "&#127880;", "&#127942;", "&#128170;", "&#128400;"];
   
@@ -279,6 +285,7 @@ els.importFile.addEventListener("change", (e) => { if (e.target.files[0]) import
 els.refreshWeather.addEventListener("click", loadWeather);
 els.weatherCity.addEventListener("change", saveWeatherCity);
 els.themeToggle.addEventListener("click", toggleTheme);
+els.coachToggle.addEventListener("click", toggleCoach);
 
 document.querySelectorAll(".status-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
