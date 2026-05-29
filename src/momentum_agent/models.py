@@ -20,6 +20,25 @@ class Priority(StrEnum):
     HIGH = "high"
 
 
+class TaskRelationType(StrEnum):
+    """类型的任务关联关系"""
+    DEPENDS_ON = "depends_on"   # 任务A 依赖 任务B 完成
+    BLOCKS = "blocks"          # 任务A 阻塞 任务B
+    RELATES_TO = "relates_to"  # 任务A 和 任务B 相关
+    PARENT_OF = "parent_of"    # 任务A 是 任务B 的父任务（子任务关系）
+    FOLLOWS = "follows"        # 任务A 在 任务B 之后执行
+
+
+@dataclass(frozen=True)
+class TaskRelation:
+    """任务之间的关联关系"""
+    id: int
+    source_task_id: int
+    target_task_id: int
+    relation_type: TaskRelationType
+    created_at: datetime
+
+
 @dataclass(frozen=True)
 class Task:
     id: int
@@ -35,6 +54,10 @@ class Task:
     created_at: datetime
     updated_at: datetime
     tags: list[str] | None = None
+    
+    # 动态计算的字段
+    subtasks: list[Task] | None = None
+    relations: list[TaskRelation] | None = None
 
 
 @dataclass(frozen=True)
@@ -67,3 +90,23 @@ class PlanOutput(BaseModel):
 
     title: str = Field(description="Clean parent task title")
     subtasks: list[SubtaskItem] = Field(description="3-5 specific, actionable subtasks")
+
+
+class TaskRelationInput(BaseModel):
+    """用于创建任务关联的输入模型"""
+    target_task_id: int = Field(description="目标任务 ID")
+    relation_type: str = Field(description="关系类型: depends_on, blocks, relates_to, parent_of, follows")
+
+
+class BulkSubtaskInput(BaseModel):
+    """批量创建子任务的输入模型"""
+    subtasks: list[SubtaskItem] = Field(description="子任务列表")
+
+
+class TaskWithRelationsOutput(BaseModel):
+    """任务详情输出，包含子任务和关联关系"""
+    task: dict
+    subtasks: list[dict]
+    dependencies: list[dict]
+    dependents: list[dict]
+    related: list[dict]

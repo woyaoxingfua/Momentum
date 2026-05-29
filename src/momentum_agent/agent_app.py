@@ -875,6 +875,206 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         
         return rec
 
+    @function_tool
+    def create_subtask(parent_task_id: int, title: str, due_at: str | None = None, priority: str = "medium", notes: str | None = None, tags: list[str] | None = None) -> str:
+        """Create a subtask for a parent task.
+        
+        Args:
+            parent_task_id: ID of the parent task
+            title: Subtask title
+            due_at: Due date/time in ISO format or natural language (e.g., "明天下午")
+            priority: low/medium/high
+            notes: Additional notes
+            tags: List of tags to add to the subtask
+        """
+        parsed = parse_task_text(f"{due_at or ''} {title}")
+        chosen_priority = Priority(priority) if priority in Priority._value2member_map_ else parsed.priority
+        task = store.create_subtask(
+            parent_task_id,
+            title,
+            due_at=parsed.due_at,
+            priority=chosen_priority,
+            estimated_minutes=parsed.estimated_minutes,
+            notes=notes,
+            tags=tags,
+            user_id=user_id,
+        )
+        log.info("agent tool create_subtask: #%d parent=%d user=%r", task.id, parent_task_id, user_id)
+        due_info = f"，截止 {task.due_at.strftime('%Y-%m-%d %H:%M')}" if task.due_at else ""
+        tags_info = f"，标签：{', '.join(task.tags)}" if task.tags else ""
+        return f"已创建子任务 #{task.id}（父任务 #{parent_task_id}）：{task.title}{due_info}{tags_info}"
+
+    @function_tool
+    def get_task_with_subtasks(task_id: int) -> dict | None:
+        """Get a task with all its subtasks.
+        
+        Args:
+            task_id: ID of the parent task
+            
+        Returns:
+            Task details with subtasks
+        """
+        task = store.get_task_with_subtasks(task_id, user_id=user_id)
+        if not task:
+            return None
+        return {
+            "id": task.id,
+            "title": task.title,
+            "status": task.status.value,
+            "priority": task.priority.value,
+            "due_at": task.due_at.isoformat() if task.due_at else None,
+            "notes": task.notes,
+            "tags": task.tags,
+            "subtasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "status": t.status.value,
+                    "priority": t.priority.value,
+                    "due_at": t.due_at.isoformat() if t.due_at else None,
+                    "tags": t.tags
+                }
+                for t in task.subtasks or []
+            ]
+        }
+
+    @function_tool
+    def add_task_dependency(task_id: int, depends_on_task_id: int) -> str:
+        """Create a dependency: task A depends on task B being completed first.
+        
+        Args:
+            task_id: The task that has a dependency
+            depends_on_task_id: The task that must be completed first
+        """
+        relation = store.add_dependency(task_id, depends_on_task_id, user_id=user_id)
+        if not relation:
+            return f"无法创建依赖关系，请检查任务 #{task_id} 和 #{depends_on_task_id} 是否存在"
+        return f"已创建依赖关系：任务 #{task_id} 依赖任务 #{depends_on_task_id}"
+
+    @function_tool
+    def remove_task_dependency(task_id: int, depends_on_task_id: int) -> str:
+        """Remove a dependency between two tasks.
+        
+        Args:
+            task_id: The task that had a dependency
+            depends_on_task_id: The task that was depended on
+        """
+        success = store.remove_dependency(task_id, depends_on_task_id, user_id=user_id)
+        if not success:
+            return f"未找到该依赖关系"
+        return f"已移除依赖关系：任务 #{task_id} 不再依赖任务 #{depends_on_task_id}"
+
+    @function_tool
+    def get_task_dependencies(task_id: int) -> list[dict]:
+        """Get all tasks that a given task depends on.
+        
+        Args:
+            task_id: The task to check dependencies for
+            
+        Returns:
+            List of tasks that this task depends on
+        """
+        dependencies = store.get_dependencies(task_id, user_id=user_id)
+        return [
+            {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status.value,
+                "priority": t.priority.value,
+                "due_at": t.due_at.isoformat() if t.due_at else None
+            }
+            for t in dependencies
+        ]
+
+    @function_tool
+    def get_task_dependents(task_id: int) -> list[dict]:
+        """Get all tasks that depend on the given task.
+        
+        Args:
+            task_id: The task to check dependents for
+            
+        Returns:
+            List of tasks that depend on this task
+        """
+        dependents = store.get_dependents(task_id, user_id=user_id)
+        return [
+            {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status.value,
+                "priority": t.priority.value,
+                "due_at": t.due_at.isoformat() if t.due_at else None
+            }
+            for t in dependents
+        ]
+
+    @function_tool
+    def add_task_relation(source_task_id: int, target_task_id: int, relation_type: str = "relates_to") -> str:
+        """Create a relation between two tasks.
+        
+        Args:
+            source_task_id: The first task ID
+            target_task_id: The second task ID
+            relation_type: Relation type: depends_on, blocks, relates_to, follows, parent_of
+        """
+        from .models import TaskRelationType
+        try:
+            rel_type = TaskRelationType(relation_type)
+        except ValueError:
+            return f"无效的关系类型，请使用：depends_on, blocks, relates_to, follows, parent_of"
+        relation = store.add_task_relation(source_task_id, target_task_id, rel_type, user_id=user_id)
+        if not relation:
+            return f"无法创建关系，请检查任务是否存在"
+        return f"已创建关系：任务 #{source_task_id} {relation_type} 任务 #{target_task_id}"
+
+    @function_tool
+    def get_task_relations(task_id: int) -> list[dict]:
+        """Get all relations for a task.
+        
+        Args:
+            task_id: The task ID to check relations for
+            
+        Returns:
+            List of task relations
+        """
+        relations = store.get_task_relations(task_id, user_id=user_id)
+        return [
+            {
+                "id": r.id,
+                "source_task_id": r.source_task_id,
+                "target_task_id": r.target_task_id,
+                "relation_type": r.relation_type.value,
+                "created_at": r.created_at.isoformat()
+            }
+            for r in relations
+        ]
+
+    @function_tool
+    def is_task_blocked(task_id: int) -> bool:
+        """Check if a task is blocked by any incomplete dependencies.
+        
+        Args:
+            task_id: The task to check
+            
+        Returns:
+            True if the task has any incomplete dependencies
+        """
+        return store.is_task_blocked(task_id, user_id=user_id)
+
+    @function_tool
+    def bulk_create_subtasks(parent_task_id: int, subtasks: list[dict]) -> str:
+        """Create multiple subtasks at once.
+        
+        Args:
+            parent_task_id: The parent task ID
+            subtasks: List of subtask objects with title, due_at, priority, notes, tags
+            
+        Returns:
+            Summary of created subtasks
+        """
+        created = store.bulk_create_subtasks(parent_task_id, subtasks, user_id=user_id)
+        return f"已为任务 #{parent_task_id} 创建 {len(created)} 个子任务：{', '.join(t.title for t in created)}"
+
     return [
         create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context,
         complete_task, start_task, drop_task, postpone_task, search_tasks, edit_task,
@@ -883,7 +1083,9 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         batch_add_tags_to_tasks, export_user_data, import_user_data, set_task_recurrence,
         get_task_subtasks, get_heartbeat_config, set_heartbeat_config, should_trigger_heartbeat,
         get_heartbeat_suggestion, set_user_location, get_user_location, get_current_weather, 
-        get_location_info, plan_outdoor_activity,
+        get_location_info, plan_outdoor_activity, create_subtask, get_task_with_subtasks,
+        add_task_dependency, remove_task_dependency, get_task_dependencies, get_task_dependents,
+        add_task_relation, get_task_relations, is_task_blocked, bulk_create_subtasks,
     ]
 
 

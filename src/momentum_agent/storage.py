@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Generator, Optional
 
 from .logger import get_logger
-from .models import Priority, Task, TaskStatus
+from .models import Priority, Task, TaskStatus, TaskRelation, TaskRelationType
 
 log = get_logger("storage")
 
@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     tags TEXT
+);
+
+CREATE TABLE IF NOT EXISTS task_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_task_id INTEGER NOT NULL REFERENCES tasks(id),
+    target_task_id INTEGER NOT NULL REFERENCES tasks(id),
+    relation_type TEXT NOT NULL,
+    user_id TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    UNIQUE(source_task_id, target_task_id, relation_type)
 );
 
 CREATE TABLE IF NOT EXISTS user_memory (
@@ -295,6 +305,7 @@ class TaskStore:
         estimated_minutes: int | None = None,
         notes: str | None = None,
         tags: list[str] | None = None,
+        parent_task_id: int | None = None,
         user_id: str = DEFAULT_USER,
     ) -> Task | None:
         log.info("update_task id=%d user=%r", task_id, user_id)
@@ -319,13 +330,17 @@ class TaskStore:
         if tags is not None:
             sets.append("tags = ?")
             params.append(_serialize_tags(tags))
+        if parent_task_id is not None:
+            sets.append("parent_task_id = ?")
+            params.append(parent_task_id)
         if not sets:
             return self._get_task(task_id)
         sets.append("updated_at = ?")
         params.append(encode_dt(now))
         params.append(task_id)
+        params.append(user_id)
         with self._connect() as conn:
-            conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", params)
+            conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ? AND user_id = ?", params)
             conn.execute(
                 "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
                 (task_id, "updated", None, encode_dt(now)),
@@ -392,6 +407,284 @@ class TaskStore:
             user_id=task.user_id or DEFAULT_USER,
         )
         return next_task
+
+    # ── subtasks ──────────────────────────────────────────────────────
+
+    def get_subtasks(self, parent_task_id: int, *, user_id: str = DEFAULT_USER) -> list[Task]:
+        """获取父任务的所有子任务"""
+        log.debug("get_subtasks parent=%d user=%r", parent_task_id, user_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE parent_task_id = ? AND user_id = ? ORDER BY id",
+                (parent_task_id, user_id),
+            ).fetchall()
+        return [row_to_task(row) for row in rows]
+
+    def get_task_with_subtasks(self, task_id: int, *, user_id: str = DEFAULT_USER) -> Task | None:
+        """获取任务及其所有子任务"""
+        task = self._get_task(task_id)
+        if not task or task.user_id != user_id:
+            return None
+        subtasks = self.get_subtasks(task_id, user_id=user_id)
+        return Task(
+            id=task.id,
+            title=task.title,
+            status=task.status,
+            priority=task.priority,
+            due_at=task.due_at,
+            estimated_minutes=task.estimated_minutes,
+            notes=task.notes,
+            parent_task_id=task.parent_task_id,
+            recurrence=task.recurrence,
+            user_id=task.user_id,
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+            tags=task.tags,
+            subtasks=subtasks,
+            relations=task.relations,
+        )
+
+    def create_subtask(
+        self,
+        parent_task_id: int,
+        title: str,
+        *,
+        due_at: datetime | None = None,
+        priority: Priority = Priority.MEDIUM,
+        estimated_minutes: int | None = None,
+        notes: str | None = None,
+        tags: list[str] | None = None,
+        user_id: str = DEFAULT_USER,
+    ) -> Task:
+        """创建子任务"""
+        log.info("create_subtask parent=%d title=%r user=%r", parent_task_id, title, user_id)
+        return self.create_task(
+            title,
+            due_at=due_at,
+            priority=priority,
+            estimated_minutes=estimated_minutes,
+            notes=notes,
+            parent_task_id=parent_task_id,
+            tags=tags,
+            user_id=user_id,
+        )
+
+    def bulk_create_subtasks(
+        self,
+        parent_task_id: int,
+        subtasks: list[dict[str, Any]],
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> list[Task]:
+        """批量创建子任务"""
+        log.info("bulk_create_subtasks parent=%d count=%d user=%r", parent_task_id, len(subtasks), user_id)
+        created_tasks = []
+        for subtask_data in subtasks:
+            task = self.create_subtask(
+                parent_task_id,
+                title=subtask_data["title"],
+                due_at=subtask_data.get("due_at"),
+                priority=Priority(subtask_data.get("priority", "medium")),
+                estimated_minutes=subtask_data.get("estimated_minutes"),
+                notes=subtask_data.get("notes"),
+                tags=subtask_data.get("tags"),
+                user_id=user_id,
+            )
+            created_tasks.append(task)
+        return created_tasks
+
+    def get_parent_task(self, task_id: int, *, user_id: str = DEFAULT_USER) -> Task | None:
+        """获取父任务"""
+        task = self._get_task(task_id)
+        if not task or task.parent_task_id is None:
+            return None
+        return self._get_task(task.parent_task_id)
+
+    # ── task relations ──────────────────────────────────────────────────────
+
+    def add_task_relation(
+        self,
+        source_task_id: int,
+        target_task_id: int,
+        relation_type: TaskRelationType,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> TaskRelation | None:
+        """添加任务关系"""
+        now = utcnow()
+        log.info("add_task_relation source=%d target=%d type=%s user=%r",
+                 source_task_id, target_task_id, relation_type.value, user_id)
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO task_relations 
+                    (source_task_id, target_task_id, relation_type, user_id, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (source_task_id, target_task_id, relation_type.value, user_id, encode_dt(now)),
+                )
+                relation_id = int(cursor.lastrowid)
+                row = conn.execute("SELECT * FROM task_relations WHERE id = ?", (relation_id,)).fetchone()
+            return row_to_task_relation(row)
+        except sqlite3.IntegrityError:
+            log.warning("task relation already exists")
+            return None
+
+    def remove_task_relation(
+        self,
+        source_task_id: int,
+        target_task_id: int,
+        relation_type: TaskRelationType,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> bool:
+        """移除任务关系"""
+        log.info("remove_task_relation source=%d target=%d type=%s user=%r",
+                 source_task_id, target_task_id, relation_type.value, user_id)
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                DELETE FROM task_relations
+                WHERE source_task_id = ? AND target_task_id = ? AND relation_type = ? AND user_id = ?
+                """,
+                (source_task_id, target_task_id, relation_type.value, user_id),
+            )
+        return result.rowcount > 0
+
+    def get_task_relations(
+        self,
+        task_id: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> list[TaskRelation]:
+        """获取任务的所有关系"""
+        log.debug("get_task_relations task=%d user=%r", task_id, user_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM task_relations
+                WHERE (source_task_id = ? OR target_task_id = ?) AND user_id = ?
+                ORDER BY created_at
+                """,
+                (task_id, task_id, user_id),
+            ).fetchall()
+        return [row_to_task_relation(row) for row in rows]
+
+    def get_dependencies(
+        self,
+        task_id: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> list[Task]:
+        """获取任务所依赖的任务（task depends on ...）"""
+        log.debug("get_dependencies task=%d user=%r", task_id, user_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.* FROM tasks t
+                INNER JOIN task_relations r ON t.id = r.target_task_id
+                WHERE r.source_task_id = ? AND r.relation_type = ? AND r.user_id = ?
+                """,
+                (task_id, TaskRelationType.DEPENDS_ON.value, user_id),
+            ).fetchall()
+        return [row_to_task(row) for row in rows]
+
+    def get_dependents(
+        self,
+        task_id: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> list[Task]:
+        """获取依赖该任务的任务（... depends on task）"""
+        log.debug("get_dependents task=%d user=%r", task_id, user_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.* FROM tasks t
+                INNER JOIN task_relations r ON t.id = r.source_task_id
+                WHERE r.target_task_id = ? AND r.relation_type = ? AND r.user_id = ?
+                """,
+                (task_id, TaskRelationType.DEPENDS_ON.value, user_id),
+            ).fetchall()
+        return [row_to_task(row) for row in rows]
+
+    def get_related_tasks(
+        self,
+        task_id: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> list[Task]:
+        """获取相关任务"""
+        log.debug("get_related_tasks task=%d user=%r", task_id, user_id)
+        related_task_ids = set()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT target_task_id FROM task_relations
+                WHERE source_task_id = ? AND relation_type = ? AND user_id = ?
+                """,
+                (task_id, TaskRelationType.RELATES_TO.value, user_id),
+            ).fetchall()
+            for row in rows:
+                related_task_ids.add(row["target_task_id"])
+            
+            rows = conn.execute(
+                """
+                SELECT source_task_id FROM task_relations
+                WHERE target_task_id = ? AND relation_type = ? AND user_id = ?
+                """,
+                (task_id, TaskRelationType.RELATES_TO.value, user_id),
+            ).fetchall()
+            for row in rows:
+                related_task_ids.add(row["source_task_id"])
+        
+        if not related_task_ids:
+            return []
+        
+        with self._connect() as conn:
+            placeholders = ", ".join("?" for _ in related_task_ids)
+            query = f"SELECT * FROM tasks WHERE id IN ({placeholders}) AND user_id = ?"
+            rows = conn.execute(query, list(related_task_ids) + [user_id]).fetchall()
+        
+        return [row_to_task(row) for row in rows]
+
+    def add_dependency(
+        self,
+        task_id: int,
+        depends_on_task_id: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> TaskRelation | None:
+        """添加依赖关系：task depends on depends_on_task"""
+        return self.add_task_relation(
+            task_id, depends_on_task_id, TaskRelationType.DEPENDS_ON, user_id=user_id
+        )
+
+    def remove_dependency(
+        self,
+        task_id: int,
+        depends_on_task_id: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> bool:
+        """移除依赖关系"""
+        return self.remove_task_relation(
+            task_id, depends_on_task_id, TaskRelationType.DEPENDS_ON, user_id=user_id
+        )
+
+    def is_task_blocked(
+        self,
+        task_id: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> bool:
+        """检查任务是否被依赖未完成的任务阻塞"""
+        dependencies = self.get_dependencies(task_id, user_id=user_id)
+        for dep in dependencies:
+            if dep.status != TaskStatus.DONE:
+                return True
+        return False
 
     # ── memory ─────────────────────────────────────────────────────
 
@@ -753,4 +1046,22 @@ def row_to_task(row: sqlite3.Row | dict[str, Any]) -> Task:
         created_at=decode_dt(get_val("created_at")) or utcnow(),
         updated_at=decode_dt(get_val("updated_at")) or utcnow(),
         tags=_deserialize_tags(get_val("tags")),
+    )
+
+
+def row_to_task_relation(row: sqlite3.Row | dict[str, Any]) -> TaskRelation:
+    def get_val(key: str, default: Any = None) -> Any:
+        if isinstance(row, dict):
+            return row.get(key, default)
+        try:
+            return row[key]
+        except (KeyError, IndexError):
+            return default
+
+    return TaskRelation(
+        id=int(get_val("id")),
+        source_task_id=int(get_val("source_task_id")),
+        target_task_id=int(get_val("target_task_id")),
+        relation_type=TaskRelationType(get_val("relation_type")),
+        created_at=decode_dt(get_val("created_at")) or utcnow(),
     )

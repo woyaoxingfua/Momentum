@@ -105,6 +105,18 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 self.handle_get_weather(user_id, parsed)
             elif parsed.path == "/api/location":
                 self.handle_get_location(user_id, parsed)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks"):
+                self.handle_get_subtasks(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/with-subtasks"):
+                self.handle_get_task_with_subtasks(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependencies"):
+                self.handle_get_dependencies(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependents"):
+                self.handle_get_dependents(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/relations"):
+                self.handle_get_task_relations(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/is-blocked"):
+                self.handle_is_task_blocked(parsed.path, user_id)
             elif parsed.path == "/api/export":
                 self.handle_export(user_id)
             elif parsed.path == "/api/advice":
@@ -173,6 +185,14 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 self.handle_batch_add_tags(user_id)
             elif parsed.path == "/api/user/location":
                 self.handle_set_user_location(user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks"):
+                self.handle_create_subtask(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependencies"):
+                self.handle_add_dependency(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/relations"):
+                self.handle_add_task_relation(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks/bulk"):
+                self.handle_bulk_create_subtasks(parsed.path, user_id)
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         finally:
@@ -644,6 +664,208 @@ class MomentumHandler(BaseHTTPRequestHandler):
             "message": f"已设置默认位置为：{city}",
             "city": city
         })
+
+    def _extract_task_id(self, path: str) -> int:
+        """Extract task ID from path like /api/tasks/{id}/subtasks"""
+        parts = path.split("/")
+        for i, part in enumerate(parts):
+            if part == "tasks" and i + 1 < len(parts):
+                try:
+                    return int(parts[i + 1])
+                except ValueError:
+                    pass
+        return -1
+
+    def handle_get_subtasks(self, path: str, user_id: str) -> None:
+        """Get all subtasks for a parent task"""
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        subtasks = TaskStore(self.db_path).get_subtasks(task_id, user_id=user_id)
+        self.send_json({"subtasks": [task_to_json(t) for t in subtasks]})
+
+    def handle_get_task_with_subtasks(self, path: str, user_id: str) -> None:
+        """Get a task with all its subtasks"""
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        task = TaskStore(self.db_path).get_task_with_subtasks(task_id, user_id=user_id)
+        if not task:
+            self.send_json({"error": "任务不存在"}, HTTPStatus.NOT_FOUND)
+            return
+        self.send_json({
+            "task": task_to_json(task),
+            "subtasks": [task_to_json(t) for t in task.subtasks or []]
+        })
+
+    def handle_create_subtask(self, path: str, user_id: str) -> None:
+        """Create a new subtask"""
+        from .agent_app import parse_task_text
+        from .models import Priority
+        
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        payload = self.read_json()
+        title = payload.get("title")
+        if not title:
+            self.send_json({"error": "需要提供任务标题"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        due_at_str = payload.get("due_at")
+        priority_str = payload.get("priority", "medium")
+        try:
+            priority = Priority(priority_str) if priority_str in Priority._value2member_map_ else Priority.MEDIUM
+        except ValueError:
+            priority = Priority.MEDIUM
+        
+        parsed = parse_task_text(f"{due_at_str or ''} {title}")
+        chosen_priority = priority if priority_str in Priority._value2member_map_ else parsed.priority
+        
+        task = TaskStore(self.db_path).create_subtask(
+            task_id,
+            title,
+            due_at=parsed.due_at,
+            priority=chosen_priority,
+            estimated_minutes=parsed.estimated_minutes,
+            notes=payload.get("notes"),
+            tags=payload.get("tags"),
+            user_id=user_id,
+        )
+        self.send_json({
+            "message": f"已创建子任务 #{task.id}",
+            "task": task_to_json(task)
+        })
+
+    def handle_bulk_create_subtasks(self, path: str, user_id: str) -> None:
+        """Bulk create multiple subtasks"""
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        payload = self.read_json()
+        subtasks = payload.get("subtasks", [])
+        if not subtasks:
+            self.send_json({"error": "需要提供子任务列表"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        created = TaskStore(self.db_path).bulk_create_subtasks(task_id, subtasks, user_id=user_id)
+        self.send_json({
+            "message": f"已创建 {len(created)} 个子任务",
+            "tasks": [task_to_json(t) for t in created]
+        })
+
+    def handle_get_dependencies(self, path: str, user_id: str) -> None:
+        """Get tasks that the given task depends on"""
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        dependencies = TaskStore(self.db_path).get_dependencies(task_id, user_id=user_id)
+        self.send_json({"dependencies": [task_to_json(t) for t in dependencies]})
+
+    def handle_get_dependents(self, path: str, user_id: str) -> None:
+        """Get tasks that depend on the given task"""
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        dependents = TaskStore(self.db_path).get_dependents(task_id, user_id=user_id)
+        self.send_json({"dependents": [task_to_json(t) for t in dependents]})
+
+    def handle_get_task_relations(self, path: str, user_id: str) -> None:
+        """Get all task relations for a task"""
+        from .models import TaskRelation
+        
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        relations = TaskStore(self.db_path).get_task_relations(task_id, user_id=user_id)
+        
+        def relation_to_json(r: TaskRelation) -> dict:
+            return {
+                "id": r.id,
+                "source_task_id": r.source_task_id,
+                "target_task_id": r.target_task_id,
+                "relation_type": r.relation_type.value,
+                "created_at": r.created_at.isoformat()
+            }
+        
+        self.send_json({"relations": [relation_to_json(r) for r in relations]})
+
+    def handle_add_dependency(self, path: str, user_id: str) -> None:
+        """Add a task dependency"""
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        payload = self.read_json()
+        depends_on_task_id = payload.get("depends_on_task_id")
+        if not depends_on_task_id:
+            self.send_json({"error": "需要提供依赖的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        relation = TaskStore(self.db_path).add_dependency(task_id, depends_on_task_id, user_id=user_id)
+        if not relation:
+            self.send_json({"error": "无法创建依赖关系，请检查任务是否存在"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        self.send_json({
+            "message": f"已创建依赖关系：任务 #{task_id} 依赖任务 #{depends_on_task_id}",
+            "source_task_id": task_id,
+            "target_task_id": depends_on_task_id
+        })
+
+    def handle_add_task_relation(self, path: str, user_id: str) -> None:
+        """Add a task relation"""
+        from .models import TaskRelationType
+        
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        payload = self.read_json()
+        target_task_id = payload.get("target_task_id")
+        relation_type_str = payload.get("relation_type", "relates_to")
+        
+        if not target_task_id:
+            self.send_json({"error": "需要提供目标任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        try:
+            relation_type = TaskRelationType(relation_type_str)
+        except ValueError:
+            self.send_json({"error": "无效的关系类型，请使用：depends_on, blocks, relates_to, follows, parent_of"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        relation = TaskStore(self.db_path).add_task_relation(task_id, target_task_id, relation_type, user_id=user_id)
+        if not relation:
+            self.send_json({"error": "无法创建关系，请检查任务是否存在"}, HTTPStatus.BAD_REQUEST)
+            return
+        
+        self.send_json({
+            "message": f"已创建关系：任务 #{task_id} {relation_type_str} 任务 #{target_task_id}",
+            "source_task_id": task_id,
+            "target_task_id": target_task_id,
+            "relation_type": relation_type_str
+        })
+
+    def handle_is_task_blocked(self, path: str, user_id: str) -> None:
+        """Check if a task is blocked by incomplete dependencies"""
+        task_id = self._extract_task_id(path)
+        if task_id < 0:
+            self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
+            return
+        is_blocked = TaskStore(self.db_path).is_task_blocked(task_id, user_id=user_id)
+        self.send_json({"is_blocked": is_blocked})
 
     def read_json(self) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0"))
