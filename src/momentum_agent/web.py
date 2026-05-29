@@ -248,7 +248,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
             TaskStore(self.db_path), task_id,
             title=payload.get("title"), due_at=payload.get("due_at"),
             priority=payload.get("priority"), estimated_minutes=payload.get("estimated_minutes"),
-            notes=payload.get("notes"), user_id=user_id,
+            notes=payload.get("notes"), tags=payload.get("tags"), user_id=user_id,
         )
         self.send_json({"message": message})
 

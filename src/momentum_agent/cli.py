@@ -55,6 +55,7 @@ def main() -> None:
     edit_parser.add_argument("--priority", choices=["low", "medium", "high"])
     edit_parser.add_argument("--estimate", type=int, dest="estimated_minutes")
     edit_parser.add_argument("--notes")
+    edit_parser.add_argument("--tags", nargs="+", help="Tags for the task, e.g. --tags work urgent personal")
 
     postpone_parser = subparsers.add_parser("postpone", help="Postpone a task by N days.")
     postpone_parser.add_argument("task_id", type=int)
@@ -120,7 +121,7 @@ def main() -> None:
             store, args.task_id,
             title=args.title, due_at=args.due, priority=args.priority,
             estimated_minutes=args.estimated_minutes, notes=args.notes,
-            user_id=user_id,
+            tags=args.tags, user_id=user_id,
         ))
     elif args.command == "postpone":
         print(postpone_task_cmd(store, args.task_id, args.days, user_id=user_id))

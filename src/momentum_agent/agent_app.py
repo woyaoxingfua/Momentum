@@ -187,6 +187,7 @@ def edit_task_from_params(
     priority: str | None = None,
     estimated_minutes: int | None = None,
     notes: str | None = None,
+    tags: list[str] | None = None,
     user_id: str = DEFAULT_USER_ID,
 ) -> str:
     log.info("edit_task id=%d user=%r", task_id, user_id)
@@ -208,12 +209,14 @@ def edit_task_from_params(
         priority=parsed_priority,
         estimated_minutes=estimated_minutes,
         notes=notes,
+        tags=tags,
         user_id=user_id,
     )
     if task is None:
         return f"没有找到任务 #{task_id}。"
     due = f"，截止 {task.due_at.strftime('%Y-%m-%d %H:%M')}" if task.due_at else ""
-    return f"已更新任务 #{task.id}：{task.title}{due}"
+    tags_str = f"，标签：{', '.join(task.tags)}" if task.tags else ""
+    return f"已更新任务 #{task.id}：{task.title}{due}{tags_str}"
 
 
 def postpone_task_cmd(store: TaskStore, task_id: int, days: int, *, user_id: str = DEFAULT_USER_ID) -> str:
