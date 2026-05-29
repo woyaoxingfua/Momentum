@@ -46,22 +46,21 @@ const els = {
   configHeartbeatEnd: document.querySelector("#configHeartbeatEnd"),
   configHeartbeatInterval: document.querySelector("#configHeartbeatInterval"),
   configSaveButton: document.querySelector("#configSaveButton"),
+  weatherTemp: document.querySelector("#weatherTemp"),
+  weatherDesc: document.querySelector("#weatherDesc"),
+  refreshWeather: document.querySelector("#refreshWeather"),
+  weatherCity: document.querySelector("#weatherCity"),
+  themeToggle: document.querySelector("#themeToggle"),
 };
-
-// ── provider ────────────────────────────────────────────────────────
 
 async function loadProvider() {
   const payload = await requestJson("/api/provider");
   els.providerStatus.textContent = payload.provider;
 }
 
-// ── refresh ─────────────────────────────────────────────────────────
-
 async function refreshAll() {
   await Promise.all([loadTasks(), loadAdvice(), loadProvider()]);
 }
-
-// ── search ──────────────────────────────────────────────────────────
 
 let searchTimer = null;
 
@@ -75,8 +74,6 @@ function onSearchInput() {
     renderTasks(payload.tasks);
   }, 200);
 }
-
-// ── export / import ─────────────────────────────────────────────────
 
 async function exportData() {
   const payload = await requestJson("/api/export");
@@ -99,23 +96,27 @@ async function importData(file) {
     });
     file.target.value = "";
     await refreshAll();
+    showToast("✅ 导入成功！");
   } catch (err) {
-    alert(`导入失败：${err.message}`);
+    showToast(`❌ 导入失败：${err.message}`);
   }
 }
-
-// ── tasks ───────────────────────────────────────────────────────────
 
 async function addTask() {
   const text = els.taskInput.value.trim();
   if (!text) return;
   els.addTaskButton.disabled = true;
+  els.addTaskButton.textContent = "⏳ 添加中...";
   try {
     await requestJson("/api/tasks", { method: "POST", body: JSON.stringify({ text }) });
     els.taskInput.value = "";
     await refreshAll();
+    showToast("✅ 任务添加成功！");
+  } catch (err) {
+    showToast(`❌ 添加失败：${err.message}`);
   } finally {
     els.addTaskButton.disabled = false;
+    els.addTaskButton.textContent = "✨ 新增任务";
   }
 }
 
@@ -123,16 +124,94 @@ async function planTask() {
   const text = els.taskInput.value.trim();
   if (!text) return;
   els.planTaskButton.disabled = true;
+  els.planTaskButton.textContent = "⏳ 拆分中...";
   try {
     await requestJson("/api/plan", { method: "POST", body: JSON.stringify({ text }) });
     els.taskInput.value = "";
     await refreshAll();
+    showToast("✅ 计划创建成功！");
+  } catch (err) {
+    showToast(`❌ 计划失败：${err.message}`);
   } finally {
     els.planTaskButton.disabled = false;
+    els.planTaskButton.textContent = "📋 拆成计划";
   }
 }
 
-// ── init ────────────────────────────────────────────────────────────
+async function loadWeather() {
+  try {
+    const userCity = localStorage.getItem("momentum_city") || "北京";
+    const response = await fetch(`/api/weather?city=${encodeURIComponent(userCity)}`);
+    if (!response.ok) {
+      throw new Error("天气加载失败");
+    }
+    const weather = await response.json();
+    els.weatherTemp.textContent = `${weather.emoji} ${weather.temperature}°C`;
+    els.weatherDesc.textContent = `${weather.condition_cn} | 湿度 ${weather.humidity}% | ${weather.advice}`;
+    els.weatherCity.value = userCity;
+  } catch (err) {
+    els.weatherTemp.textContent = "❓ --°C";
+    els.weatherDesc.textContent = "天气加载失败，请检查网络";
+  }
+}
+
+function saveWeatherCity() {
+  const city = els.weatherCity.value.trim();
+  if (city) {
+    localStorage.setItem("momentum_city", city);
+    loadWeather();
+    showToast(`📍 已切换到 ${city} 的天气`);
+  }
+}
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute("data-theme");
+  const newTheme = currentTheme === "dark" ? "light" : "dark";
+  
+  document.documentElement.setAttribute("data-theme", newTheme);
+  localStorage.setItem("momentum_theme", newTheme);
+  
+  els.themeToggle.textContent = newTheme === "dark" ? "☀️" : "🌙";
+  showToast(newTheme === "dark" ? "🌙 已切换到深色模式" : "☀️ 已切换到浅色模式");
+}
+
+function loadTheme() {
+  const savedTheme = localStorage.getItem("momentum_theme") || "light";
+  document.documentElement.setAttribute("data-theme", savedTheme);
+  els.themeToggle.textContent = savedTheme === "dark" ? "☀️" : "🌙";
+}
+
+function showConfetti() {
+  const colors = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7", "#dfe6e9", "#a29bfe"];
+  const emojis = ["🎉", "✨", "🌟", "💫", "⭐", "🎊", "👏"];
+  
+  for (let i = 0; i < 20; i++) {
+    const confetti = document.createElement("div");
+    confetti.className = "confetti";
+    confetti.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+    confetti.style.left = `${Math.random() * 100}vw`;
+    confetti.style.fontSize = `${Math.random() * 20 + 20}px`;
+    confetti.style.animationDelay = `${Math.random() * 0.5}s`;
+    document.body.appendChild(confetti);
+    
+    setTimeout(() => confetti.remove(), 3000);
+  }
+}
+
+function showToast(message) {
+  const existing = document.querySelector(".toast");
+  if (existing) existing.remove();
+  
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
 
 initTasks(
   { tasks: els.tasks, taskCount: els.taskCount },
@@ -163,6 +242,9 @@ els.configSaveButton.addEventListener("click", saveConfig);
 els.searchInput.addEventListener("input", onSearchInput);
 els.exportButton.addEventListener("click", exportData);
 els.importFile.addEventListener("change", (e) => { if (e.target.files[0]) importData(e); });
+els.refreshWeather.addEventListener("click", loadWeather);
+els.weatherCity.addEventListener("change", saveWeatherCity);
+els.themeToggle.addEventListener("click", toggleTheme);
 
 document.querySelectorAll(".status-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
@@ -181,8 +263,13 @@ refreshAll().catch((error) => {
   els.adviceText.textContent = error.message;
 });
 loadConfig();
+loadTheme();
+loadWeather();
 
-// 初始化心跳
+window.showConfetti = showConfetti;
+
+setInterval(loadWeather, 300000);
+
 initHeartbeat(els);
 loadHeartbeatConfig();
 startHeartbeatChecks();

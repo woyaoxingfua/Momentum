@@ -91,7 +91,17 @@ function bindTaskButtons() {
 
   document.querySelectorAll("[data-done]").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      const taskCard = btn.closest(".task");
+      if (taskCard) {
+        taskCard.classList.add("task-completing");
+      }
+      
       await requestJson(`/api/tasks/${btn.dataset.done}/done`, { method: "POST" });
+      
+      if (typeof showConfetti === "function") {
+        setTimeout(() => showConfetti(), 300);
+      }
+      
       await loadTasks();
     });
   });
