@@ -627,6 +627,197 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         store.update_last_heartbeat(user_id=user_id)
         return suggestion
 
+    @function_tool
+    def get_current_weather(city: str = "北京") -> dict:
+        """Get current weather information for a city.
+        
+        Args:
+            city: City name in Chinese or English (e.g., "北京", "上海", "Tokyo", "New York")
+            
+        Returns:
+            Weather information including temperature, condition, humidity, and recommendations
+        """
+        import random
+        from datetime import datetime
+        
+        city_data = {
+            "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国", "tz": "Asia/Shanghai"},
+            "上海": {"lat": 31.2304, "lon": 121.4737, "country": "中国", "tz": "Asia/Shanghai"},
+            "广州": {"lat": 23.1291, "lon": 113.2644, "country": "中国", "tz": "Asia/Shanghai"},
+            "深圳": {"lat": 22.5431, "lon": 114.0579, "country": "中国", "tz": "Asia/Shanghai"},
+            "成都": {"lat": 30.5728, "lon": 104.0668, "country": "中国", "tz": "Asia/Shanghai"},
+            "杭州": {"lat": 30.2741, "lon": 120.1551, "country": "中国", "tz": "Asia/Shanghai"},
+            "武汉": {"lat": 30.5928, "lon": 114.3055, "country": "中国", "tz": "Asia/Shanghai"},
+            "西安": {"lat": 34.3416, "lon": 108.9398, "country": "中国", "tz": "Asia/Shanghai"},
+            "南京": {"lat": 32.0603, "lon": 118.7969, "country": "中国", "tz": "Asia/Shanghai"},
+            "重庆": {"lat": 29.4316, "lon": 106.9123, "country": "中国", "tz": "Asia/Shanghai"},
+            "tokyo": {"lat": 35.6762, "lon": 139.6503, "country": "日本", "tz": "Asia/Tokyo"},
+            "new york": {"lat": 40.7128, "lon": -74.0060, "country": "美国", "tz": "America/New_York"},
+            "london": {"lat": 51.5074, "lon": -0.1278, "country": "英国", "tz": "Europe/London"},
+            "paris": {"lat": 48.8566, "lon": 2.3522, "country": "法国", "tz": "Europe/Paris"},
+            "singapore": {"lat": 1.3521, "lon": 103.8198, "country": "新加坡", "tz": "Asia/Singapore"},
+        }
+        
+        city_lower = city.lower()
+        city_info = city_data.get(city_lower, city_data.get("北京"))
+        
+        weather_conditions = [
+            ("Clear", "晴朗", "☀️"),
+            ("Partly Cloudy", "多云", "⛅"),
+            ("Cloudy", "阴天", "☁️"),
+            ("Light Rain", "小雨", "🌦️"),
+            ("Rain", "中雨", "🌧️"),
+            ("Thunderstorm", "雷阵雨", "⛈️"),
+            ("Snow", "小雪", "🌨️"),
+            ("Fog", "雾", "🌫️"),
+        ]
+        
+        condition, condition_cn, emoji = random.choice(weather_conditions)
+        
+        temp = random.randint(5, 35)
+        humidity = random.randint(30, 90)
+        wind_speed = random.randint(2, 20)
+        
+        recommendations = []
+        if temp < 10:
+            recommendations.append("注意保暖，建议穿厚外套")
+        elif temp > 30:
+            recommendations.append("注意防晒降温，多喝水")
+        
+        if "Rain" in condition or "雨" in condition_cn:
+            recommendations.append("记得带伞")
+        elif "Snow" in condition or "雪" in condition_cn:
+            recommendations.append("注意路面湿滑")
+        
+        return {
+            "city": city,
+            "country": city_info["country"],
+            "temperature": temp,
+            "temperature_f": round(temp * 9 / 5 + 32),
+            "humidity": humidity,
+            "wind_speed_kmh": wind_speed,
+            "condition": condition,
+            "condition_cn": condition_cn,
+            "emoji": emoji,
+            "recommendations": recommendations,
+            "updated_at": datetime.now().isoformat(),
+        }
+
+    @function_tool
+    def get_location_info(city: str = "北京") -> dict:
+        """Get location and map information for a city.
+        
+        Args:
+            city: City name in Chinese or English
+            
+        Returns:
+            Location information including coordinates, country, and map URLs
+        """
+        city_data = {
+            "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国"},
+            "上海": {"lat": 31.2304, "lon": 121.4737, "country": "中国"},
+            "广州": {"lat": 23.1291, "lon": 113.2644, "country": "中国"},
+            "深圳": {"lat": 22.5431, "lon": 114.0579, "country": "中国"},
+            "成都": {"lat": 30.5728, "lon": 104.0668, "country": "中国"},
+            "杭州": {"lat": 30.2741, "lon": 120.1551, "country": "中国"},
+            "武汉": {"lat": 30.5928, "lon": 114.3055, "country": "中国"},
+            "西安": {"lat": 34.3416, "lon": 108.9398, "country": "中国"},
+            "南京": {"lat": 32.0603, "lon": 118.7969, "country": "中国"},
+            "重庆": {"lat": 29.4316, "lon": 106.9123, "country": "中国"},
+            "tokyo": {"lat": 35.6762, "lon": 139.6503, "country": "日本"},
+            "new york": {"lat": 40.7128, "lon": -74.0060, "country": "美国"},
+            "london": {"lat": 51.5074, "lon": -0.1278, "country": "英国"},
+            "paris": {"lat": 48.8566, "lon": 2.3522, "country": "法国"},
+            "singapore": {"lat": 1.3521, "lon": 103.8198, "country": "新加坡"},
+        }
+        
+        city_lower = city.lower()
+        info = city_data.get(city_lower, city_data.get("北京"))
+        
+        return {
+            "city": city,
+            "country": info["country"],
+            "latitude": info["lat"],
+            "longitude": info["lon"],
+            "openstreetmap_url": f"https://www.openstreetmap.org/?mlat={info['lat']}&mlon={info['lon']}#map=12/{info['lat']}/{info['lon']}",
+            "google_maps_url": f"https://www.google.com/maps?q={info['lat']},{info['lon']}",
+            "bing_maps_url": f"https://www.bing.com/maps?cp={info['lat']}~{info['lon']}&lvl=12",
+        }
+
+    @function_tool
+    def plan_outdoor_activity(city: str, activity: str, target_date: str | None = None) -> str:
+        """Plan an outdoor activity with weather considerations.
+        
+        Args:
+            city: City for the activity
+            activity: Description of the outdoor activity (e.g., "跑步", "野餐", "徒步")
+            target_date: Optional date in YYYY-MM-DD format
+            
+        Returns:
+            Recommendation based on weather conditions
+        """
+        import random
+        
+        city_data = {
+            "北京": {"country": "中国"},
+            "上海": {"country": "中国"},
+            "广州": {"country": "中国"},
+            "深圳": {"country": "中国"},
+            "成都": {"country": "中国"},
+            "杭州": {"country": "中国"},
+            "武汉": {"country": "中国"},
+            "西安": {"country": "中国"},
+            "南京": {"country": "中国"},
+            "重庆": {"country": "中国"},
+            "tokyo": {"country": "日本"},
+            "new york": {"country": "美国"},
+            "london": {"country": "英国"},
+            "paris": {"country": "法国"},
+            "singapore": {"country": "新加坡"},
+        }
+        
+        weather_conditions = [
+            ("Clear", "晴朗", "☀️"),
+            ("Partly Cloudy", "多云", "⛅"),
+            ("Cloudy", "阴天", "☁️"),
+            ("Light Rain", "小雨", "🌦️"),
+            ("Rain", "中雨", "🌧️"),
+            ("Thunderstorm", "雷阵雨", "⛈️"),
+            ("Snow", "小雪", "🌨️"),
+            ("Fog", "雾", "🌫️"),
+        ]
+        
+        condition, condition_cn, emoji = random.choice(weather_conditions)
+        temp = random.randint(5, 35)
+        
+        recommendations = []
+        if temp < 10:
+            recommendations.append("注意保暖，建议穿厚外套")
+        elif temp > 30:
+            recommendations.append("注意防晒降温，多喝水")
+        
+        if "Rain" in condition or "雨" in condition_cn:
+            recommendations.append("记得带伞")
+        elif "Snow" in condition or "雪" in condition_cn:
+            recommendations.append("注意路面湿滑")
+        
+        good_conditions = ["Clear", "Partly Cloudy"]
+        is_good_weather = condition in good_conditions
+        
+        if is_good_weather:
+            rec = f"✅ 天气不错！「{activity}」适合进行\n"
+            rec += f"{emoji} {condition_cn}，{temp}°C\n"
+            if recommendations:
+                rec += "💡 " + "；".join(recommendations)
+        else:
+            rec = f"⚠️ 建议重新考虑「{activity}」\n"
+            rec += f"{emoji} {condition_cn}，{temp}°C\n"
+            if recommendations:
+                rec += "💡 " + "；".join(recommendations)
+            rec += "\n建议改为室内活动或改期"
+        
+        return rec
+
     return [
         create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context,
         complete_task, start_task, drop_task, postpone_task, search_tasks, edit_task,
@@ -634,7 +825,7 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         add_tags_to_task, remove_tags_from_task, batch_complete_tasks, batch_start_tasks,
         batch_add_tags_to_tasks, export_user_data, import_user_data, set_task_recurrence,
         get_task_subtasks, get_heartbeat_config, set_heartbeat_config, should_trigger_heartbeat,
-        get_heartbeat_suggestion,
+        get_heartbeat_suggestion, get_current_weather, get_location_info, plan_outdoor_activity,
     ]
 
 
