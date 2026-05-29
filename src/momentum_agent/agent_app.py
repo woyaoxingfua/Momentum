@@ -1029,13 +1029,22 @@ async def _build_output_guardrail():
     return sanitize_output
 
 
-async def run_agent_message(db_path: Path, message: str, *, user_id: str = DEFAULT_USER_ID) -> str:
-    """Run a message through the full agent system (CLI and web non-streaming)."""
-    log.info("agent_message user=%r msg=%r", user_id, message[:80])
+async def run_agent_message(db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID) -> str:
+    """Run a message through the full agent system (CLI and web non-streaming).
+    
+    Args:
+        db_path: Database path
+        message: Text message from user
+        image_base64: Optional base64-encoded image for vision models
+        user_id: User identifier
+    """
+    log.info("agent_message user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
     provider = load_provider_config()
 
     if not provider.is_configured:
         store = TaskStore(db_path)
+        if image_base64:
+            return "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
         if should_review(message):
             return local_review(store, user_id=user_id)
         if should_plan(message):
@@ -1057,17 +1066,46 @@ async def run_agent_message(db_path: Path, message: str, *, user_id: str = DEFAU
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
 
-    result = await Runner.run(
-        agent, message,
-        max_turns=30,
-        session=session,
-        hooks=_make_hooks(),
-        run_config=RunConfig(
-            input_guardrails=[guardrail],
-            output_guardrails=[out_guardrail],
-            workflow_name="momentum-chat",
-        ),
-    )
+    # Build message with optional image for vision models
+    if image_base64:
+        from openai import BaseModel
+        agent_input = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": message if message else "请分析这张图片，提取其中的任务信息并创建相应的待办事项。"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}"
+                        }
+                    }
+                ]
+            }
+        ]
+        result = await Runner.run(
+            agent, agent_input,
+            max_turns=30,
+            session=session,
+            hooks=_make_hooks(),
+            run_config=RunConfig(
+                input_guardrails=[guardrail],
+                output_guardrails=[out_guardrail],
+                workflow_name="momentum-chat",
+            ),
+        )
+    else:
+        result = await Runner.run(
+            agent, message,
+            max_turns=30,
+            session=session,
+            hooks=_make_hooks(),
+            run_config=RunConfig(
+                input_guardrails=[guardrail],
+                output_guardrails=[out_guardrail],
+                workflow_name="momentum-chat",
+            ),
+        )
 
     reply = result.final_output
     log.info("agent done: user=%r len=%d", user_id, len(reply))
@@ -1075,14 +1113,24 @@ async def run_agent_message(db_path: Path, message: str, *, user_id: str = DEFAU
 
 
 async def run_agent_message_stream(
-    db_path: Path, message: str, *, user_id: str = DEFAULT_USER_ID
+    db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
 ) -> AsyncIterator[str]:
-    """Stream agent response via Runner.run_streamed() with session + hooks + guardrails."""
-    log.info("agent_stream user=%r msg=%r", user_id, message[:80])
+    """Stream agent response via Runner.run_streamed() with session + hooks + guardrails.
+    
+    Args:
+        db_path: Database path
+        message: Text message from user
+        image_base64: Optional base64-encoded image for vision models
+        user_id: User identifier
+    """
+    log.info("agent_stream user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
     provider = load_provider_config()
 
     if not provider.is_configured:
         store = TaskStore(db_path)
+        if image_base64:
+            yield "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
+            return
         if should_review(message):
             yield local_review(store, user_id=user_id)
         elif should_plan(message):
