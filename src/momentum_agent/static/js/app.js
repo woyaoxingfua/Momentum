@@ -84,7 +84,7 @@ async function exportData() {
   a.download = "momentum-export.json";
   a.click();
   URL.revokeObjectURL(url);
-  showToast("📤 数据导出成功！");
+  showToast("数据导出成功");
 }
 
 async function importData(file) {
@@ -97,9 +97,9 @@ async function importData(file) {
     });
     file.target.value = "";
     await refreshAll();
-    showToast("✅ 数据导入成功！");
+    showToast("数据导入成功");
   } catch (err) {
-    showToast(`❌ 导入失败：${err.message}`);
+    showToast(`导入失败：${err.message}`);
   }
 }
 
@@ -108,14 +108,14 @@ async function addTask() {
   if (!text) return;
   const originalText = els.addTaskButton.textContent;
   els.addTaskButton.disabled = true;
-  els.addTaskButton.textContent = "⏳ 添加中...";
+  els.addTaskButton.textContent = "添加中...";
   try {
     await requestJson("/api/tasks", { method: "POST", body: JSON.stringify({ text }) });
     els.taskInput.value = "";
     await refreshAll();
-    showToast("✅ 任务添加成功！");
+    showToast("任务添加成功");
   } catch (err) {
-    showToast(`❌ 添加失败：${err.message}`);
+    showToast(`添加失败：${err.message}`);
   } finally {
     els.addTaskButton.disabled = false;
     els.addTaskButton.textContent = originalText;
@@ -127,14 +127,14 @@ async function planTask() {
   if (!text) return;
   const originalText = els.planTaskButton.textContent;
   els.planTaskButton.disabled = true;
-  els.planTaskButton.textContent = "⏳ 拆分中...";
+  els.planTaskButton.textContent = "拆分中...";
   try {
     await requestJson("/api/plan", { method: "POST", body: JSON.stringify({ text }) });
     els.taskInput.value = "";
     await refreshAll();
-    showToast("✅ 计划创建成功！");
+    showToast("计划创建成功");
   } catch (err) {
-    showToast(`❌ 计划失败：${err.message}`);
+    showToast(`计划失败：${err.message}`);
   } finally {
     els.planTaskButton.disabled = false;
     els.planTaskButton.textContent = originalText;
@@ -144,7 +144,7 @@ async function planTask() {
 async function loadWeather() {
   try {
     const userCity = localStorage.getItem("momentum_city") || "北京";
-    els.weatherTemp.textContent = "⏳";
+    els.weatherTemp.textContent = "...";
     els.weatherDesc.textContent = "加载中...";
     const response = await fetch(`/api/weather?city=${encodeURIComponent(userCity)}`);
     if (!response.ok) {
@@ -155,7 +155,7 @@ async function loadWeather() {
     els.weatherDesc.textContent = `${weather.condition_cn} | 湿度 ${weather.humidity}% | ${weather.advice}`;
     els.weatherCity.value = userCity;
   } catch (err) {
-    els.weatherTemp.textContent = "❓";
+    els.weatherTemp.textContent = "?";
     els.weatherDesc.textContent = "天气加载失败，请稍后重试";
   }
 }
@@ -165,7 +165,7 @@ function saveWeatherCity() {
   if (city) {
     localStorage.setItem("momentum_city", city);
     loadWeather();
-    showToast(`📍 已切换到 ${city} 的天气`);
+    showToast(`已切换到 ${city} 的天气`);
   }
 }
 
@@ -176,29 +176,29 @@ function toggleTheme() {
   document.documentElement.setAttribute("data-theme", newTheme);
   localStorage.setItem("momentum_theme", newTheme);
   
-  els.themeToggle.textContent = newTheme === "dark" ? "☀️" : "🌙";
-  showToast(newTheme === "dark" ? "🌙 已切换到深色模式" : "☀️ 已切换到浅色模式");
+  els.themeToggle.innerHTML = newTheme === "dark" ? "&#9788;" : "&#9790;";
+  showToast(newTheme === "dark" ? "已切换到深色模式" : "已切换到浅色模式");
 }
 
 function loadTheme() {
   const savedTheme = localStorage.getItem("momentum_theme") || "light";
   document.documentElement.setAttribute("data-theme", savedTheme);
-  els.themeToggle.textContent = savedTheme === "dark" ? "☀️" : "🌙";
+  els.themeToggle.innerHTML = savedTheme === "dark" ? "&#9788;" : "&#9790;";
 }
 
 function showConfetti() {
-  const emojis = ["🎉", "✨", "🌟", "💫", "⭐", "🎊", "👏", "🎈", "🎁", "💪"];
+  const emojis = ["&#10024;", "&#10047;", "&#10048;", "&#10083;", "&#127880;", "&#127942;", "&#128170;", "&#128400;"];
   
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 15; i++) {
     const confetti = document.createElement("div");
     confetti.className = "confetti";
-    confetti.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+    confetti.innerHTML = emojis[Math.floor(Math.random() * emojis.length)];
     confetti.style.left = `${Math.random() * 100}vw`;
-    confetti.style.fontSize = `${Math.random() * 20 + 20}px`;
+    confetti.style.fontSize = `${Math.random() * 16 + 16}px`;
     confetti.style.animationDelay = `${Math.random() * 0.5}s`;
     document.body.appendChild(confetti);
     
-    setTimeout(() => confetti.remove(), 3000);
+    setTimeout(() => confetti.remove(), 2500);
   }
 }
 
@@ -220,12 +220,12 @@ function showToast(message) {
 async function loadAdviceWithLoading() {
   const originalText = els.adviseButton.textContent;
   els.adviseButton.disabled = true;
-  els.adviseButton.textContent = "⏳ 加载中...";
+  els.adviseButton.textContent = "加载中...";
   try {
     await loadAdvice();
-    showToast("💡 今日建议已更新！");
+    showToast("今日建议已更新");
   } catch (err) {
-    showToast(`❌ 加载失败：${err.message}`);
+    showToast(`加载失败：${err.message}`);
   } finally {
     els.adviseButton.disabled = false;
     els.adviseButton.textContent = originalText;
@@ -235,12 +235,12 @@ async function loadAdviceWithLoading() {
 async function loadReviewWithLoading() {
   const originalText = els.reviewButton.textContent;
   els.reviewButton.disabled = true;
-  els.reviewButton.textContent = "⏳ 复盘中...";
+  els.reviewButton.textContent = "复盘中...";
   try {
     await loadReview();
-    showToast("📊 复盘已更新！");
+    showToast("复盘已更新");
   } catch (err) {
-    showToast(`❌ 加载失败：${err.message}`);
+    showToast(`加载失败：${err.message}`);
   } finally {
     els.reviewButton.disabled = false;
     els.reviewButton.textContent = originalText;

@@ -7,9 +7,10 @@
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <button id="themeToggle" class="theme-toggle" title="切换主题">🌙</button>
+    <button id="themeToggle" class="theme-toggle" title="切换主题">&#9790;</button>
+    
     <main class="shell">
-      <section class="workbench" aria-label="任务工作台">
+      <section class="workbench">
         <header class="topbar">
           <div>
             <p class="eyebrow">Momentum</p>
@@ -17,32 +18,32 @@
           </div>
           <div class="topbar-right">
             <span class="muted" id="currentUser"></span>
-            <div class="status-pill" id="taskCount">0 个待办</div>
-            <button id="logoutButton" title="登出">退出</button>
+            <div class="task-count" id="taskCount">0 个待办</div>
+            <button id="logoutButton" class="btn-secondary">退出</button>
           </div>
         </header>
 
-        <section class="composer" aria-label="创建任务">
-          <textarea id="taskInput" rows="3" placeholder="例如：明天下午整理产品经理面试材料 🚀"></textarea>
+        <section class="composer">
+          <textarea id="taskInput" rows="3" placeholder="输入任务内容，例如：明天下午3点整理产品文档"></textarea>
           <div class="composer-actions">
-            <button id="addTaskButton" class="primary">✨ 新增任务</button>
-            <button id="planTaskButton">📋 拆成计划</button>
-            <button id="adviseButton">💡 今日建议</button>
-            <button id="reviewButton">📊 复盘</button>
+            <button id="addTaskButton" class="btn-primary">新增任务</button>
+            <button id="planTaskButton" class="btn-secondary-action">拆成计划</button>
+            <button id="adviseButton" class="btn-secondary-action">今日建议</button>
+            <button id="reviewButton" class="btn-secondary-action">复盘</button>
           </div>
         </section>
 
-        <div class="weather-widget" id="weatherWidget">
-          <div class="weather-widget-header">
-            <span class="weather-widget-title">🌤️ 天气</span>
-            <button id="refreshWeather" style="font-size: 12px; min-height: 28px; padding: 0 10px;">🔄</button>
+        <div class="weather-card">
+          <div class="weather-header">
+            <span class="weather-title">天气</span>
+            <button id="refreshWeather" class="btn-icon" title="刷新">&#8635;</button>
           </div>
-          <div class="weather-widget-content">
-            <div class="weather-widget-temp" id="weatherTemp">--°C</div>
-            <div class="weather-widget-desc" id="weatherDesc">加载中...</div>
+          <div class="weather-content">
+            <div class="weather-temp" id="weatherTemp">--°C</div>
+            <div class="weather-desc" id="weatherDesc">加载中...</div>
           </div>
-          <div class="weather-location-selector">
-            <input type="text" id="weatherCity" class="weather-location-input" placeholder="输入城市名称查询天气..." list="cityList" />
+          <div class="weather-location">
+            <input type="text" id="weatherCity" placeholder="输入城市名称查询天气..." list="cityList" />
             <datalist id="cityList">
               <option value="北京" />
               <option value="上海" />
@@ -63,36 +64,36 @@
           </div>
         </div>
 
-        <section class="insight" aria-live="polite">
-          <span class="insight-label">💡 下一步</span>
-          <p id="adviceText">正在读取任务状态...</p>
+        <section class="insight-card">
+          <div class="insight-label">下一步</div>
+          <p class="insight-text" id="adviceText">正在读取任务状态...</p>
         </section>
 
-        <section class="heartbeat" id="heartbeatSection" aria-live="polite" style="display: none;">
+        <section class="heartbeat-card" id="heartbeatSection" style="display: none;">
           <div class="heartbeat-header">
-            <span class="heartbeat-icon">💡</span>
-            <span class="insight-label">主动提醒</span>
+            <div class="heartbeat-icon">!</div>
+            <span class="heartbeat-title">主动提醒</span>
           </div>
-          <p id="heartbeatText"></p>
+          <p class="heartbeat-text" id="heartbeatText"></p>
           <div class="heartbeat-actions">
-            <button id="heartbeatDismiss" class="text-button">稍后提醒</button>
+            <button id="heartbeatDismiss" class="btn-text">稍后提醒</button>
           </div>
         </section>
 
-        <section class="task-list" aria-label="任务列表">
-          <div class="section-heading">
+        <section class="task-list">
+          <div class="section-header">
             <div class="status-tabs">
-              <button class="status-tab active" data-status="todo">📝 待办</button>
-              <button class="status-tab" data-status="doing">🔄 进行中</button>
-              <button class="status-tab" data-status="done">✅ 已完成</button>
-              <button class="status-tab" data-status="dropped">❌ 已放弃</button>
+              <button class="status-tab active" data-status="todo">待办</button>
+              <button class="status-tab" data-status="doing">进行中</button>
+              <button class="status-tab" data-status="done">已完成</button>
+              <button class="status-tab" data-status="dropped">已放弃</button>
             </div>
-            <div class="heading-actions">
-              <input id="searchInput" placeholder="🔍 搜索任务..." class="search-input" />
-              <button id="refreshButton" title="刷新">🔄</button>
-              <button id="exportButton" title="导出数据">📤</button>
-              <label class="import-label" title="导入数据">
-                📥 导入
+            <div class="header-actions">
+              <input id="searchInput" placeholder="搜索任务..." class="search-input" />
+              <button id="refreshButton" class="btn-icon" title="刷新">&#8635;</button>
+              <button id="exportButton" class="btn-icon" title="导出数据">&#8681;</button>
+              <label class="btn-secondary" title="导入数据">
+                导入
                 <input id="importFile" type="file" accept=".json" hidden />
               </label>
             </div>
@@ -101,18 +102,18 @@
         </section>
       </section>
 
-      <aside class="coach" aria-label="Agent 对话">
-        <div class="section-heading">
-          <h2>🤖 Agent</h2>
-          <span class="muted" id="providerStatus">读取服务商...</span>
+      <aside class="coach">
+        <div class="coach-header">
+          <h2>Agent</h2>
+          <span class="provider-status" id="providerStatus">读取中...</span>
         </div>
         <div id="chatLog" class="chat-log"></div>
         <form id="chatForm" class="chat-form">
-          <input id="chatInput" placeholder="让助手帮你拆分、安排或复盘..." />
-          <button class="primary" type="submit">发送</button>
+          <input id="chatInput" placeholder="与助手对话..." />
+          <button class="btn-primary" type="submit">&#10148;</button>
         </form>
         <details class="config-panel">
-          <summary>⚙️ 偏好设置</summary>
+          <summary>偏好设置</summary>
           <div class="config-form">
             <label>每日可用时间（分钟）
               <input id="configCapacity" type="number" min="0" max="480" placeholder="45" />
@@ -124,7 +125,7 @@
               <input id="configWorkEnd" type="time" value="18:00" />
             </label>
             <div class="config-divider"></div>
-            <label class="checkbox-label">
+            <label class="checkbox-row">
               <input id="configHeartbeatEnabled" type="checkbox" />
               启用主动提醒
             </label>
@@ -137,7 +138,7 @@
             <label>提醒间隔（小时）
               <input id="configHeartbeatInterval" type="number" min="1" max="24" value="4" />
             </label>
-            <button id="configSaveButton" class="primary">💾 保存</button>
+            <button id="configSaveButton" class="btn-primary">保存</button>
           </div>
         </details>
       </aside>
@@ -145,23 +146,23 @@
 
     <dialog id="editDialog">
       <form method="dialog" class="edit-form">
-        <h3>✏️ 编辑任务</h3>
+        <h3>编辑任务</h3>
         <input type="hidden" id="editTaskId" />
         <label>标题 <input id="editTitle" /></label>
         <label>截止时间 <input id="editDue" type="datetime-local" /></label>
         <label>优先级
           <select id="editPriority">
-            <option value="low">🔽 低</option>
-            <option value="medium" selected>🔼 中</option>
-            <option value="high">⏫ 高</option>
+            <option value="low">低</option>
+            <option value="medium" selected>中</option>
+            <option value="high">高</option>
           </select>
         </label>
         <label>预估时间（分钟）<input id="editEstimate" type="number" min="1" max="480" /></label>
         <label>标签（逗号分隔） <input id="editTags" placeholder="例如：工作, 紧急, 个人" /></label>
         <label>备注 <input id="editNotes" /></label>
         <div class="edit-actions">
-          <button type="submit" class="primary">💾 保存</button>
-          <button type="button" id="editCancelButton">取消</button>
+          <button type="submit" class="btn-primary">保存</button>
+          <button type="button" id="editCancelButton" class="btn-secondary">取消</button>
         </div>
       </form>
     </dialog>

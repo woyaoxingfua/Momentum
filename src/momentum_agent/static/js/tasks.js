@@ -21,7 +21,12 @@ export function renderTasks(tasks) {
   const label = STATUS_LABELS[currentStatus] || "待办";
   els.taskCount.textContent = `${tasks.length} 个${label}`;
   if (tasks.length === 0) {
-    els.tasks.innerHTML = `<div class="empty">没有${label}任务。</div>`;
+    els.tasks.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">&#9744;</div>
+        <div class="empty-text">没有${label}任务</div>
+      </div>
+    `;
     return;
   }
 
@@ -35,26 +40,25 @@ export function renderTasks(tasks) {
 
 function renderTaskCard(task) {
   const statusBadge = task.status !== "todo"
-    ? `<span class="badge status-badge status-${task.status}">${STATUS_LABELS[task.status] || task.status}</span>`
+    ? `<span class="task-badge badge-${task.status}">${STATUS_LABELS[task.status] || task.status}</span>`
     : "";
   
   const tagsHtml = task.tags && task.tags.length > 0
-    ? task.tags.map(tag => `<span class="badge tag">${escapeHtml(tag)}</span>`).join("")
+    ? task.tags.map(tag => `<span class="task-badge badge-tag">${escapeHtml(tag)}</span>`).join("")
     : "";
 
   return `
-    <article class="task ${task.parent_task_id ? "task-subtask" : ""} ${task.status !== "todo" ? `task-${task.status}` : ""} ${task.priority === "high" ? "task-high" : ""}" data-task-id="${task.id}">
-      <div>
+    <article class="task" data-task-id="${task.id}" data-status="${task.status}" data-priority="${task.priority}">
+      <div class="task-header">
         <div class="task-title">${escapeHtml(task.title)}</div>
-        <div class="task-meta">
-          ${statusBadge}
-          <span class="badge ${task.priority}">${priorityText(task.priority)}</span>
-          <span>${formatDue(task.due_at)}</span>
-          <span>${task.estimated_minutes ? `${task.estimated_minutes} 分钟` : "未估时"}</span>
-          ${task.parent_task_id ? `<span>子任务</span>` : ""}
-          ${task.recurrence ? `<span class="badge recurrence">${recurrenceText(task.recurrence)}</span>` : ""}
-          ${tagsHtml}
-        </div>
+      </div>
+      <div class="task-meta">
+        ${statusBadge}
+        <span class="task-badge badge-${task.priority}">${priorityText(task.priority)}</span>
+        <span class="task-info">${formatDue(task.due_at)}</span>
+        ${task.estimated_minutes ? `<span class="task-info">${task.estimated_minutes} 分钟</span>` : ""}
+        ${task.recurrence ? `<span class="task-badge badge-tag">${recurrenceText(task.recurrence)}</span>` : ""}
+        ${tagsHtml}
       </div>
       <div class="task-actions">
         ${actionButtons(task)}
@@ -64,18 +68,18 @@ function renderTaskCard(task) {
 
 function actionButtons(task) {
   const buttons = [];
-  buttons.push(`<button data-edit="${task.id}" title="编辑">✏️ 编辑</button>`);
+  buttons.push(`<button class="btn-task" data-edit="${task.id}">编辑</button>`);
 
   if (task.status === "todo") {
-    buttons.push(`<button data-start="${task.id}" title="开始做">▶️ 开始</button>`);
-    buttons.push(`<button data-done="${task.id}" title="完成">✅ 完成</button>`);
-    buttons.push(`<button data-postpone="${task.id}" title="推迟">⏰ 推迟</button>`);
-    buttons.push(`<button data-drop="${task.id}" title="放弃">❌ 放弃</button>`);
+    buttons.push(`<button class="btn-task btn-start" data-start="${task.id}">开始</button>`);
+    buttons.push(`<button class="btn-task btn-done" data-done="${task.id}">完成</button>`);
+    buttons.push(`<button class="btn-task" data-postpone="${task.id}">推迟</button>`);
+    buttons.push(`<button class="btn-task" data-drop="${task.id}">放弃</button>`);
   } else if (task.status === "doing") {
-    buttons.push(`<button data-done="${task.id}" title="完成">✅ 完成</button>`);
-    buttons.push(`<button data-drop="${task.id}" title="放弃">❌ 放弃</button>`);
+    buttons.push(`<button class="btn-task btn-done" data-done="${task.id}">完成</button>`);
+    buttons.push(`<button class="btn-task" data-drop="${task.id}">放弃</button>`);
   } else {
-    buttons.push(`<button data-reopen="${task.id}" title="重新打开">🔄 重开</button>`);
+    buttons.push(`<button class="btn-task" data-reopen="${task.id}">重开</button>`);
   }
 
   return buttons.join("");
@@ -86,13 +90,13 @@ function bindTaskButtons() {
     btn.addEventListener("click", async () => {
       const originalText = btn.textContent;
       btn.disabled = true;
-      btn.textContent = "⏳";
+      btn.textContent = "...";
       try {
         await requestJson(`/api/tasks/${btn.dataset.start}/start`, { method: "POST" });
         await loadTasks();
-        showToast("▶️ 已开始任务！");
+        showToast("已开始任务");
       } catch (err) {
-        showToast(`❌ 操作失败：${err.message}`);
+        showToast(`操作失败：${err.message}`);
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -108,7 +112,7 @@ function bindTaskButtons() {
       }
       const originalText = btn.textContent;
       btn.disabled = true;
-      btn.textContent = "⏳";
+      btn.textContent = "...";
       try {
         await requestJson(`/api/tasks/${btn.dataset.done}/done`, { method: "POST" });
         
@@ -117,9 +121,9 @@ function bindTaskButtons() {
         }
         
         await loadTasks();
-        showToast("✅ 任务已完成！");
+        showToast("任务已完成");
       } catch (err) {
-        showToast(`❌ 操作失败：${err.message}`);
+        showToast(`操作失败：${err.message}`);
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -135,15 +139,15 @@ function bindTaskButtons() {
     btn.addEventListener("click", async () => {
       const originalText = btn.textContent;
       btn.disabled = true;
-      btn.textContent = "⏳";
+      btn.textContent = "...";
       try {
         await requestJson(`/api/tasks/${btn.dataset.postpone}/postpone`, {
           method: "POST", body: JSON.stringify({ days: 3 }),
         });
         await loadTasks();
-        showToast("⏰ 已推迟任务！");
+        showToast("已推迟任务");
       } catch (err) {
-        showToast(`❌ 操作失败：${err.message}`);
+        showToast(`操作失败：${err.message}`);
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -156,13 +160,13 @@ function bindTaskButtons() {
       if (!confirm("确定要放弃这个任务吗？")) return;
       const originalText = btn.textContent;
       btn.disabled = true;
-      btn.textContent = "⏳";
+      btn.textContent = "...";
       try {
         await requestJson(`/api/tasks/${btn.dataset.drop}/drop`, { method: "POST" });
         await loadTasks();
-        showToast("❌ 已放弃任务！");
+        showToast("已放弃任务");
       } catch (err) {
-        showToast(`❌ 操作失败：${err.message}`);
+        showToast(`操作失败：${err.message}`);
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -174,13 +178,13 @@ function bindTaskButtons() {
     btn.addEventListener("click", async () => {
       const originalText = btn.textContent;
       btn.disabled = true;
-      btn.textContent = "⏳";
+      btn.textContent = "...";
       try {
         await requestJson(`/api/tasks/${btn.dataset.reopen}/reopen`, { method: "POST" });
         await loadTasks();
-        showToast("🔄 已重新打开任务！");
+        showToast("已重新打开任务");
       } catch (err) {
-        showToast(`❌ 操作失败：${err.message}`);
+        showToast(`操作失败：${err.message}`);
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -216,7 +220,7 @@ export async function saveEdit(event) {
   const saveBtn = els.editDialog.querySelector('button[type="submit"]');
   const originalText = saveBtn.textContent;
   saveBtn.disabled = true;
-  saveBtn.textContent = "⏳ 保存中...";
+  saveBtn.textContent = "保存中...";
   
   try {
     const body = {
@@ -230,9 +234,9 @@ export async function saveEdit(event) {
     await requestJson(`/api/tasks/${els.editTaskId.value}`, { method: "PUT", body: JSON.stringify(body) });
     els.editDialog.close();
     await loadTasks();
-    showToast("✅ 任务已保存！");
+    showToast("任务已保存");
   } catch (err) {
-    showToast(`❌ 保存失败：${err.message}`);
+    showToast(`保存失败：${err.message}`);
   } finally {
     saveBtn.disabled = false;
     saveBtn.textContent = originalText;
