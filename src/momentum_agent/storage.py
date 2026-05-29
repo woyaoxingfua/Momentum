@@ -89,6 +89,16 @@ class TaskStore:
             log.info("created default user (password: momentum)")
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
+        from .auth import hash_password
+        user_cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "password_hash" not in user_cols:
+            log.info("migration: adding password_hash column to users")
+            conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+            default_hash = hash_password("momentum")
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE password_hash IS NULL",
+                (default_hash,),
+            )
         cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         if "recurrence" not in cols:
             log.info("migration: adding recurrence column")

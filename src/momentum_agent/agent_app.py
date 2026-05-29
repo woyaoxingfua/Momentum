@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -267,6 +269,9 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
     """Create the full function_tool set for SDK agents, bound to a specific user."""
     from agents import function_tool
 
+    def _to_json(payload: object) -> str:
+        return json.dumps(payload, ensure_ascii=False)
+
     @function_tool
     def create_task(title: str, due_at: str | None = None, priority: str = "medium", notes: str | None = None) -> str:
         """Create a task in the local todo database."""
@@ -291,25 +296,25 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         return create_plan_from_text(store, text, user_id=user_id)
 
     @function_tool
-    def list_tasks(status: str = "todo") -> list[dict[str, str | int | None]]:
-        """List tasks by status. Status can be: todo, doing, done, dropped, or 'all' for everything."""
+    def list_tasks(status: str = "todo") -> str:
+        """List tasks by status (JSON string). Status: todo, doing, done, dropped, or 'all'."""
         if status == "all":
             tasks = store.list_tasks(status=None, user_id=user_id)
         else:
             chosen = TaskStatus(status) if status in TaskStatus._value2member_map_ else TaskStatus.TODO
             tasks = store.list_tasks(chosen, user_id=user_id)
-        return [
+        payload = [
             {"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority.value,
              "due_at": t.due_at.isoformat() if t.due_at else None,
              "estimated_minutes": t.estimated_minutes,
              "parent_task_id": t.parent_task_id, "recurrence": t.recurrence}
             for t in tasks
         ]
+        return _to_json(payload)
 
     @function_tool
-    def get_overview() -> dict:
-        """Get a complete task overview: counts by status, overdue count, due-soon count.
-        Use this first when the user asks 'how am I doing' or to get a full picture."""
+    def get_overview() -> str:
+        """Get a task overview as JSON: counts, overdue, due-soon, top-3 todos."""
         all_tasks = store.list_tasks(status=None, user_id=user_id)
         now = datetime.now().astimezone()
         counts = {"todo": 0, "doing": 0, "done": 0, "dropped": 0}
@@ -322,7 +327,7 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
                     overdue += 1
                 elif t.due_at < now + timedelta(days=2):
                     due_soon += 1
-        return {
+        payload = {
             "total": len(all_tasks),
             "by_status": counts,
             "overdue": overdue,
@@ -333,6 +338,7 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
                 for t in all_tasks if t.status == TaskStatus.TODO
             ][:3],
         }
+        return _to_json(payload)
 
     @function_tool
     def edit_task(task_id: int, title: str | None = None, due_at: str | None = None,
@@ -355,17 +361,18 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         return local_review(store, user_id=user_id)
 
     @function_tool
-    def get_user_context() -> dict[str, str | int]:
-        """Get current workload, energy level, available time, and coaching context."""
+    def get_user_context() -> str:
+        """Get current workload/energy/available time as JSON."""
         prefs = _read_preferences(store, user_id=user_id)
         context = build_user_context(store.list_tasks(TaskStatus.TODO, user_id=user_id), **prefs)
-        return {
+        payload = {
             "now": context.now.isoformat(),
             "energy": context.energy,
             "available_minutes_today": context.available_minutes_today,
             "recent_pattern": context.recent_pattern,
             "local_advice": choose_next_action(store.list_tasks(TaskStatus.TODO, user_id=user_id), context),
         }
+        return _to_json(payload)
 
     @function_tool
     def complete_task(task_id: int) -> str:
@@ -409,13 +416,14 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         return f"已推迟 #{task.id}：{task.title} → {new_due}"
 
     @function_tool
-    def search_tasks(query: str) -> list[dict[str, str | int | None]]:
-        """Search tasks by keyword in title."""
-        return [
+    def search_tasks(query: str) -> str:
+        """Search tasks by keyword in title (JSON string)."""
+        payload = [
             {"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority.value,
              "due_at": t.due_at.isoformat() if t.due_at else None}
             for t in store.search_tasks(query, user_id=user_id)
         ]
+        return _to_json(payload)
 
     @function_tool
     def save_note(content: str) -> str:
@@ -425,10 +433,11 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         return f"note saved: {content[:80]}"
 
     @function_tool
-    def get_my_notes() -> dict[str, str]:
-        """Retrieve all notes you've saved about this user, including preferences and past decisions."""
+    def get_my_notes() -> str:
+        """Retrieve all notes you've saved about this user (JSON string)."""
         all_mem = store.get_all_memory(user_id=user_id)
-        return {k: v for k, v in all_mem.items() if k.startswith("agent_note_")}
+        payload = {k: v for k, v in all_mem.items() if k.startswith("agent_note_")}
+        return _to_json(payload)
 
     return [
         create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context,
@@ -441,6 +450,100 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
 _sessions: dict[str, object] = {}
 
 
+SESSION_LIMIT: int | None = None
+SESSION_VERSION = "v2"
+
+
+def _extract_text(content: object) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                text = part.get("text")
+            else:
+                text = getattr(part, "text", None)
+            if text:
+                parts.append(str(text))
+        return "".join(parts)
+    return str(content)
+
+
+def _is_empty_assistant_message(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if item.get("role") != "assistant":
+        return False
+    if item.get("tool_calls"):
+        return False
+    text = _extract_text(item.get("content", "")).strip()
+    return not text
+
+
+def _sanitize_items(items: list[object]) -> list[object]:
+    return [item for item in items if not _is_empty_assistant_message(item)]
+
+
+def _cleanup_session_db(db_path: Path, session_id: str) -> None:
+    if not db_path.exists():
+        return
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_messages'"
+    )
+    if not cur.fetchone():
+        conn.close()
+        return
+    cur.execute(
+        "SELECT id, message_data FROM agent_messages WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    )
+    rows = cur.fetchall()
+    call_to_ids: dict[str, list[int]] = {}
+    seen_calls: set[str] = set()
+    pending_calls: set[str] = set()
+    delete_ids: set[int] = set()
+
+    for msg_id, data in rows:
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if _is_empty_assistant_message(payload):
+            delete_ids.add(msg_id)
+            continue
+        item_type = payload.get("type")
+        if item_type == "function_call":
+            call_id = payload.get("call_id")
+            if not call_id:
+                delete_ids.add(msg_id)
+                continue
+            seen_calls.add(call_id)
+            pending_calls.add(call_id)
+            call_to_ids.setdefault(call_id, []).append(msg_id)
+        elif item_type == "function_call_output":
+            call_id = payload.get("call_id")
+            if not call_id or call_id not in seen_calls:
+                delete_ids.add(msg_id)
+            else:
+                pending_calls.discard(call_id)
+
+    for call_id in pending_calls:
+        delete_ids.update(call_to_ids.get(call_id, []))
+
+    if delete_ids:
+        cur.executemany(
+            "DELETE FROM agent_messages WHERE id = ?",
+            [(msg_id,) for msg_id in sorted(delete_ids)],
+        )
+        conn.commit()
+    conn.close()
+
+
 def _get_session(db_path: Path, user_id: str):
     from agents import SQLiteSession
 
@@ -449,13 +552,33 @@ def _get_session(db_path: Path, user_id: str):
         _sessions[key] = {}
     sessions_for_db = _sessions[key]
     if user_id not in sessions_for_db:
-        session_path = db_path.parent / f".momentum_sessions_{user_id}.db"
+        session_id = f"{user_id}-{SESSION_VERSION}"
+        session_path = db_path.parent / f".momentum_sessions_{user_id}_{SESSION_VERSION}.db"
         from agents import SessionSettings
-        sessions_for_db[user_id] = SQLiteSession(
-            session_id=user_id,
+        _cleanup_session_db(session_path, session_id)
+        base_session = SQLiteSession(
+            session_id=session_id,
             db_path=str(session_path),
-            session_settings=SessionSettings(limit=30),
+            session_settings=SessionSettings(limit=SESSION_LIMIT),
         )
+        class _SanitizedSession:
+            session_id = base_session.session_id
+            session_settings = base_session.session_settings
+
+            async def get_items(self, limit: int | None = None):
+                items = await base_session.get_items(limit)
+                return _sanitize_items(items)
+
+            async def add_items(self, items):
+                await base_session.add_items(_sanitize_items(list(items)))
+
+            async def pop_item(self):
+                return await base_session.pop_item()
+
+            async def clear_session(self):
+                return await base_session.clear_session()
+
+        sessions_for_db[user_id] = _SanitizedSession()
     return sessions_for_db[user_id]
 
 
@@ -492,7 +615,11 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 收到任何用户消息后，在心里走这三步：
 
 ### 第一步：观察 + 思考（必须先做）
-不要急着回复！先用工具搞清楚状况：
+不要急着回复！先用工具搞清楚状况，**明确新任务要先查再做**：
+- 用户明确给出要做的事（动作 + 目标，通常带时间/截止）→ 先用 search_tasks 查重：
+  - 没有相近任务 → 直接 create_task 或 create_plan
+  - 有相近任务 → 询问是否仍需新建（避免重复）
+- 即使你在心里查重，也不要对用户说“我先查一下”，直接给出结果/问题。
 - 用户说"hi"/"早"/开场白 → 拉 list_tasks + get_user_context + get_daily_review（可以同时调）
 - 用户提到某个任务 → search_tasks 找到它
 - 用户说做了某事 → 先 search_tasks 确认是哪个任务，再 complete_task
@@ -509,9 +636,9 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 - 需要推迟的 → postpone_task
 
 ### 第三步：反馈（告诉用户你做了什么，然后主动建议下一步）
-- 列出你刚才做的操作
-- 指出当前最该关注的一件事
-- 如果发现异常（过期/堆积/长期没进展），主动提醒
+- **先给一句操作结果**（比如“已创建任务 #x…”）
+- 只给**简短**的概览/建议（除非用户要求详细）
+- 如果发现异常（过期/堆积/长期没进展），再补充提醒
 
 ## 工具清单（14 个）
 
@@ -549,16 +676,72 @@ async def _build_input_guardrail():
 
     @input_guardrail
     async def relevance_check(context, agent, input_text) -> GuardrailFunctionOutput:
+        def _extract_role(item: object) -> str | None:
+            if isinstance(item, dict):
+                role = item.get("role")
+            else:
+                role = getattr(item, "role", None)
+            return str(role).lower() if role else None
+
+        def _extract_content(item: object) -> str | None:
+            if isinstance(item, dict):
+                content = item.get("content")
+            else:
+                content = getattr(item, "content", None)
+
+            if isinstance(content, list):
+                parts: list[str] = []
+                for block in content:
+                    if isinstance(block, dict):
+                        text = block.get("text")
+                    else:
+                        text = getattr(block, "text", None)
+                    if text:
+                        parts.append(str(text))
+                return " ".join(parts).strip() if parts else ""
+            if content is not None:
+                return str(content).strip()
+
+            if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                return str(item["text"]).strip()
+            if getattr(item, "text", None):
+                return str(getattr(item, "text")).strip()
+            return None
+
         if isinstance(input_text, list):
-            text = " ".join(str(item) for item in input_text)
+            user_parts: list[str] = []
+            other_parts: list[str] = []
+            for item in input_text:
+                part = _extract_content(item)
+                if part is None:
+                    continue
+                if _extract_role(item) == "user":
+                    user_parts.append(part)
+                else:
+                    other_parts.append(part)
+            if user_parts:
+                text = " ".join(user_parts).strip()
+            elif other_parts:
+                text = " ".join(other_parts).strip()
+            else:
+                text = ""
+            if user_parts:
+                if not text or len(text) < 1:
+                    return GuardrailFunctionOutput(output_info="empty input", tripwire_triggered=True)
+                if len(text) > 2000:
+                    return GuardrailFunctionOutput(output_info="input too long", tripwire_triggered=True)
         elif isinstance(input_text, str):
             text = input_text.strip()
+            if not text or len(text) < 1:
+                return GuardrailFunctionOutput(output_info="empty input", tripwire_triggered=True)
+            if len(text) > 2000:
+                return GuardrailFunctionOutput(output_info="input too long", tripwire_triggered=True)
         else:
-            text = str(input_text) if input_text else ""
-        if not text or len(text) < 1:
-            return GuardrailFunctionOutput(output_info="empty input", tripwire_triggered=True)
-        if len(text) > 2000:
-            return GuardrailFunctionOutput(output_info="input too long", tripwire_triggered=True)
+            text = str(input_text).strip() if input_text else ""
+            if not text or len(text) < 1:
+                return GuardrailFunctionOutput(output_info="empty input", tripwire_triggered=True)
+            if len(text) > 2000:
+                return GuardrailFunctionOutput(output_info="input too long", tripwire_triggered=True)
         return GuardrailFunctionOutput(output_info="ok", tripwire_triggered=False)
 
     return relevance_check

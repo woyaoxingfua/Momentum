@@ -76,11 +76,20 @@ export async function sendChat(event) {
   const agentItem = addMessage("agent", "…");
 
   try {
+    const token = localStorage.getItem("momentum_token");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const response = await fetch("/api/chat/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ message }),
     });
+
+    if (response.status === 401) {
+      localStorage.removeItem("momentum_token");
+      window.location.href = "/login.html";
+      return;
+    }
 
     if (!response.ok) {
       const err = await response.json();
