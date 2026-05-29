@@ -9,7 +9,7 @@ from importlib.resources import files
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .agent_app import (
+from ..agent_app import (
     create_plan_from_text,
     create_task_from_text,
     drop_task_cmd,
@@ -25,12 +25,12 @@ from .agent_app import (
     set_user_config_cmd,
     start_task_cmd,
 )
-from .auth import hash_password
-from .config import get_current_user
-from .context import build_user_context, heartbeat_suggestion
-from .logger import get_logger, init_from_env, request_context, log_api_request
-from .models import Priority, Task, TaskRelation, TaskRelationType, TaskStatus
-from .storage import DEFAULT_USER, TaskStore
+from ..auth import hash_password
+from ..config import get_current_user
+from ..logger import get_logger, init_from_env
+from ..models import Priority, Task, TaskStatus
+from ..storage import TaskStore
+from ..context import build_user_context, heartbeat_suggestion
 
 log = get_logger("web")
 
@@ -63,142 +63,140 @@ class MomentumHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         t0 = time.time()
         parsed = urlparse(self.path)
-        with request_context():
-            try:
-                # static files — no auth
-                if parsed.path in ("/", "/login.html", "/app.css", "/app.js") or parsed.path.startswith("/js/"):
-                    if parsed.path == "/":
-                        self.send_static("index.html", "text/html; charset=utf-8")
-                    elif parsed.path == "/login.html":
-                        self.send_static("login.html", "text/html; charset=utf-8")
-                    elif parsed.path == "/app.css":
-                        self.send_static("app.css", "text/css; charset=utf-8")
-                    elif parsed.path == "/app.js":
-                        self.send_static("app.js", "text/javascript; charset=utf-8")
-                    else:
-                        name = parsed.path.split("/")[-1]
-                        self.send_static(f"js/{name}", "text/javascript; charset=utf-8")
-                    return
-
-                # API endpoints — require auth
-                user_id = _require_auth(self)
-                if user_id is None:
-                    return
-
-                if parsed.path == "/api/tasks":
-                    query = parse_qs(parsed.query)
-                    if "q" in query:
-                        self.handle_search_tasks(query["q"][0], user_id)
-                    elif "tag" in query:
-                        self.handle_get_tasks_by_tag(query["tag"][0], user_id)
-                    else:
-                        status = query.get("status", ["todo"])[0]
-                        self.handle_list_tasks(status, user_id)
-                elif parsed.path == "/api/tags":
-                    self.handle_get_all_tags(user_id)
-                elif parsed.path == "/api/heartbeat/config":
-                    self.handle_get_heartbeat_config(user_id)
-                elif parsed.path == "/api/heartbeat/suggestion":
-                    self.handle_get_heartbeat_suggestion(user_id)
-                elif parsed.path == "/api/user/location":
-                    self.handle_get_user_location(user_id)
-                elif parsed.path == "/api/weather":
-                    self.handle_get_weather(user_id, parsed)
-                elif parsed.path == "/api/location":
-                    self.handle_get_location(user_id, parsed)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks"):
-                    self.handle_get_subtasks(parsed.path, user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/with-subtasks"):
-                    self.handle_get_task_with_subtasks(parsed.path, user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependencies"):
-                    self.handle_get_dependencies(parsed.path, user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependents"):
-                    self.handle_get_dependents(parsed.path, user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/relations"):
-                    self.handle_get_task_relations(parsed.path, user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/is-blocked"):
-                    self.handle_is_task_blocked(parsed.path, user_id)
-                elif parsed.path == "/api/export":
-                    self.handle_export(user_id)
-                elif parsed.path == "/api/advice":
-                    self.send_json({"advice": local_advice(TaskStore(self.db_path), user_id=user_id)})
-                elif parsed.path == "/api/review":
-                    self.send_json({"review": local_review(TaskStore(self.db_path), user_id=user_id)})
-                elif parsed.path == "/api/provider":
-                    self.send_json({"provider": provider_status()})
-                elif parsed.path == "/api/config":
-                    self.send_json({"config": get_user_config_cmd(TaskStore(self.db_path), user_id=user_id)})
-                elif parsed.path == "/api/me":
-                    self.send_json({"user_id": user_id})
+        try:
+            # static files — no auth
+            if parsed.path in ("/", "/login.html", "/app.css", "/app.js") or parsed.path.startswith("/js/"):
+                if parsed.path == "/":
+                    self.send_static("index.html", "text/html; charset=utf-8")
+                elif parsed.path == "/login.html":
+                    self.send_static("login.html", "text/html; charset=utf-8")
+                elif parsed.path == "/app.css":
+                    self.send_static("app.css", "text/css; charset=utf-8")
+                elif parsed.path == "/app.js":
+                    self.send_static("app.js", "text/javascript; charset=utf-8")
                 else:
-                    self.send_error(HTTPStatus.NOT_FOUND)
-            finally:
-                log_api_request("GET", parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
+                    name = parsed.path.split("/")[-1]
+                    self.send_static(f"js/{name}", "text/javascript; charset=utf-8")
+                return
+
+            # API endpoints — require auth
+            user_id = _require_auth(self)
+            if user_id is None:
+                return
+
+            if parsed.path == "/api/tasks":
+                query = parse_qs(parsed.query)
+                if "q" in query:
+                    self.handle_search_tasks(query["q"][0], user_id)
+                elif "tag" in query:
+                    self.handle_get_tasks_by_tag(query["tag"][0], user_id)
+                else:
+                    status = query.get("status", ["todo"])[0]
+                    self.handle_list_tasks(status, user_id)
+            elif parsed.path == "/api/tags":
+                self.handle_get_all_tags(user_id)
+            elif parsed.path == "/api/heartbeat/config":
+                self.handle_get_heartbeat_config(user_id)
+            elif parsed.path == "/api/heartbeat/suggestion":
+                self.handle_get_heartbeat_suggestion(user_id)
+            elif parsed.path == "/api/user/location":
+                self.handle_get_user_location(user_id)
+            elif parsed.path == "/api/weather":
+                self.handle_get_weather(user_id, parsed)
+            elif parsed.path == "/api/location":
+                self.handle_get_location(user_id, parsed)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks"):
+                self.handle_get_subtasks(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/with-subtasks"):
+                self.handle_get_task_with_subtasks(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependencies"):
+                self.handle_get_dependencies(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependents"):
+                self.handle_get_dependents(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/relations"):
+                self.handle_get_task_relations(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/is-blocked"):
+                self.handle_is_task_blocked(parsed.path, user_id)
+            elif parsed.path == "/api/export":
+                self.handle_export(user_id)
+            elif parsed.path == "/api/advice":
+                self.send_json({"advice": local_advice(TaskStore(self.db_path), user_id=user_id)})
+            elif parsed.path == "/api/review":
+                self.send_json({"review": local_review(TaskStore(self.db_path), user_id=user_id)})
+            elif parsed.path == "/api/provider":
+                self.send_json({"provider": provider_status()})
+            elif parsed.path == "/api/config":
+                self.send_json({"config": get_user_config_cmd(TaskStore(self.db_path), user_id=user_id)})
+            elif parsed.path == "/api/me":
+                self.send_json({"user_id": user_id})
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+        finally:
+            log.info("%s %s → %d (%.0fms)", self.command, parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
 
     def do_POST(self) -> None:
         t0 = time.time()
         parsed = urlparse(self.path)
-        with request_context():
-            try:
-                # auth endpoints — no auth required
-                if parsed.path in ("/api/register", "/api/login", "/api/logout"):
-                    if parsed.path == "/api/register":
-                        self.handle_register()
-                    elif parsed.path == "/api/login":
-                        self.handle_login()
-                    else:
-                        self.handle_logout()
-                    return
-
-                # all other endpoints require auth
-                user_id = _require_auth(self)
-                if user_id is None:
-                    return
-
-                if parsed.path == "/api/tasks":
-                    self.handle_create_task(user_id)
-                elif parsed.path == "/api/plan":
-                    self.handle_create_plan(user_id)
-                elif parsed.path == "/api/change-password":
-                    self.handle_change_password(user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/done"):
-                    self.handle_done_task(parsed.path)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/postpone"):
-                    self.handle_postpone_task(parsed.path)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/drop"):
-                    self.handle_drop_task(parsed.path)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/start"):
-                    self.handle_start_task(parsed.path)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/reopen"):
-                    self.handle_reopen_task(parsed.path)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks"):
-                    self.handle_create_subtask(parsed.path, user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/bulk-subtasks"):
-                    self.handle_bulk_create_subtasks(parsed.path, user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependencies"):
-                    self.handle_add_dependency(parsed.path, user_id)
-                elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/relations"):
-                    self.handle_add_task_relation(parsed.path, user_id)
-                elif parsed.path == "/api/batch/update-status":
-                    self.handle_batch_update_status(user_id)
-                elif parsed.path == "/api/batch/add-tags":
-                    self.handle_batch_add_tags(user_id)
-                elif parsed.path == "/api/heartbeat/config":
-                    self.handle_set_heartbeat_config(user_id)
-                elif parsed.path == "/api/user/location":
-                    self.handle_set_user_location(user_id)
-                elif parsed.path == "/api/chat":
-                    self.handle_chat(user_id)
-                elif parsed.path == "/api/chat/stream":
-                    self.handle_chat_stream(user_id)
-                elif parsed.path == "/api/config":
-                    self.handle_set_config(user_id)
-                elif parsed.path == "/api/import":
-                    self.handle_import(user_id)
+        try:
+            # auth endpoints — no auth required
+            if parsed.path in ("/api/register", "/api/login", "/api/logout"):
+                if parsed.path == "/api/register":
+                    self.handle_register()
+                elif parsed.path == "/api/login":
+                    self.handle_login()
                 else:
-                    self.send_error(HTTPStatus.NOT_FOUND)
-            finally:
-                log_api_request("POST", parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
+                    self.handle_logout()
+                return
+
+            # all other endpoints require auth
+            user_id = _require_auth(self)
+            if user_id is None:
+                return
+
+            if parsed.path == "/api/tasks":
+                self.handle_create_task(user_id)
+            elif parsed.path == "/api/plan":
+                self.handle_create_plan(user_id)
+            elif parsed.path == "/api/change-password":
+                self.handle_change_password(user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/done"):
+                self.handle_done_task(parsed.path)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/postpone"):
+                self.handle_postpone_task(parsed.path)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/drop"):
+                self.handle_drop_task(parsed.path)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/start"):
+                self.handle_start_task(parsed.path)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/reopen"):
+                self.handle_reopen_task(parsed.path)
+            elif parsed.path == "/api/chat":
+                self.handle_chat(user_id)
+            elif parsed.path == "/api/chat/stream":
+                self.handle_chat_stream(user_id)
+            elif parsed.path == "/api/config":
+                self.handle_set_config(user_id)
+            elif parsed.path == "/api/import":
+                self.handle_import(user_id)
+            elif parsed.path == "/api/heartbeat/config":
+                self.handle_set_heartbeat_config(user_id)
+            elif parsed.path == "/api/batch/status":
+                self.handle_batch_update_status(user_id)
+            elif parsed.path == "/api/batch/tags":
+                self.handle_batch_add_tags(user_id)
+            elif parsed.path == "/api/user/location":
+                self.handle_set_user_location(user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks"):
+                self.handle_create_subtask(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/dependencies"):
+                self.handle_add_dependency(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/relations"):
+                self.handle_add_task_relation(parsed.path, user_id)
+            elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks/bulk"):
+                self.handle_bulk_create_subtasks(parsed.path, user_id)
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+        finally:
+            log.info("%s %s → %d (%.0fms)", self.command, parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
 
     def do_PUT(self) -> None:
         t0 = time.time()
@@ -206,14 +204,13 @@ class MomentumHandler(BaseHTTPRequestHandler):
         user_id = _require_auth(self)
         if user_id is None:
             return
-        with request_context():
-            try:
-                if parsed.path.startswith("/api/tasks/") and "/done" not in parsed.path and "/postpone" not in parsed.path and "/drop" not in parsed.path:
-                    self.handle_edit_task(parsed.path, user_id)
-                else:
-                    self.send_error(HTTPStatus.NOT_FOUND)
-            finally:
-                log_api_request("PUT", parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
+        try:
+            if parsed.path.startswith("/api/tasks/") and "/done" not in parsed.path and "/postpone" not in parsed.path and "/drop" not in parsed.path:
+                self.handle_edit_task(parsed.path, user_id)
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+        finally:
+            log.info("%s %s → %d (%.0fms)", self.command, parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
 
     _last_status: int = 200
 
@@ -279,7 +276,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
             TaskStore(self.db_path), task_id,
             title=payload.get("title"), due_at=payload.get("due_at"),
             priority=payload.get("priority"), estimated_minutes=payload.get("estimated_minutes"),
-            notes=payload.get("notes"), user_id=user_id,
+            notes=payload.get("notes"), tags=payload.get("tags"), user_id=user_id,
         )
         self.send_json({"message": message})
 
@@ -443,8 +440,6 @@ class MomentumHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json({"error": f"导入失败：{exc}"}, HTTPStatus.BAD_REQUEST)
 
-    # ---- v1 新增：标签相关 ----
-
     def handle_get_all_tags(self, user_id: str) -> None:
         tags = TaskStore(self.db_path).get_all_tags(user_id=user_id)
         self.send_json({"tags": tags})
@@ -452,8 +447,6 @@ class MomentumHandler(BaseHTTPRequestHandler):
     def handle_get_tasks_by_tag(self, tag: str, user_id: str) -> None:
         tasks = TaskStore(self.db_path).get_tasks_by_tag(tag, user_id=user_id)
         self.send_json({"tasks": [task_to_json(t) for t in tasks]})
-
-    # ---- v1 新增：批量操作 ----
 
     def handle_batch_update_status(self, user_id: str) -> None:
         payload = self.read_json()
@@ -490,8 +483,6 @@ class MomentumHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json({"error": f"批量添加标签失败：{exc}"}, HTTPStatus.BAD_REQUEST)
 
-    # ---- v1 新增：心跳相关 ----
-
     def handle_get_heartbeat_config(self, user_id: str) -> None:
         config = TaskStore(self.db_path).get_heartbeat_config(user_id=user_id)
         self.send_json({"config": config})
@@ -504,7 +495,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
             start_hour=payload.get("start_hour"),
             end_hour=payload.get("end_hour"),
             interval_hours=payload.get("interval_hours"),
-            user_id=user_id,
+            user_id=user_id
         )
         status = "已启用" if config["enabled"] else "已禁用"
         self.send_json({"status": status, "config": config})
@@ -519,26 +510,25 @@ class MomentumHandler(BaseHTTPRequestHandler):
         self.send_json({
             "suggestion": suggestion,
             "should_trigger": should_trigger,
-            "config": store.get_heartbeat_config(user_id=user_id),
+            "config": store.get_heartbeat_config(user_id=user_id)
         })
-
-    # ---- v1 新增：天气和位置 ----
 
     def handle_get_weather(self, user_id: str, parsed) -> None:
         import random
         from datetime import datetime
         from urllib.parse import parse_qs
-
+        
         query = parse_qs(parsed.query)
         city = query.get("city", [None])[0]
-
+        
+        # If no city provided, use user's saved location
         if not city:
             saved_city = TaskStore(self.db_path).get_memory("user_location", user_id=user_id)
             if saved_city:
                 city = saved_city
             else:
                 city = "北京"
-
+        
         city_data = {
             "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国"},
             "上海": {"lat": 31.2304, "lon": 121.4737, "country": "中国"},
@@ -556,10 +546,10 @@ class MomentumHandler(BaseHTTPRequestHandler):
             "paris": {"lat": 48.8566, "lon": 2.3522, "country": "法国"},
             "singapore": {"lat": 1.3521, "lon": 103.8198, "country": "新加坡"},
         }
-
+        
         city_lower = city.lower()
         city_info = city_data.get(city_lower, city_data.get("北京"))
-
+        
         weather_conditions = [
             ("Clear", "晴朗", "☀️"),
             ("Partly Cloudy", "多云", "⛅"),
@@ -570,24 +560,24 @@ class MomentumHandler(BaseHTTPRequestHandler):
             ("Snow", "小雪", "🌨️"),
             ("Fog", "雾", "🌫️"),
         ]
-
+        
         condition, condition_cn, emoji = random.choice(weather_conditions)
-
+        
         temp = random.randint(5, 35)
         humidity = random.randint(30, 90)
         wind_speed = random.randint(2, 20)
-
+        
         recommendations = []
         if temp < 10:
             recommendations.append("注意保暖，建议穿厚外套")
         elif temp > 30:
             recommendations.append("注意防晒降温，多喝水")
-
+        
         if "Rain" in condition or "雨" in condition_cn:
             recommendations.append("记得带伞")
         elif "Snow" in condition or "雪" in condition_cn:
             recommendations.append("注意路面湿滑")
-
+        
         self.send_json({
             "city": city,
             "country": city_info["country"],
@@ -604,17 +594,18 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
     def handle_get_location(self, user_id: str, parsed) -> None:
         from urllib.parse import parse_qs
-
+        
         query = parse_qs(parsed.query)
         city = query.get("city", [None])[0]
-
+        
+        # If no city provided, use user's saved location
         if not city:
             saved_city = TaskStore(self.db_path).get_memory("user_location", user_id=user_id)
             if saved_city:
                 city = saved_city
             else:
                 city = "北京"
-
+        
         city_data = {
             "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国"},
             "上海": {"lat": 31.2304, "lon": 121.4737, "country": "中国"},
@@ -632,10 +623,10 @@ class MomentumHandler(BaseHTTPRequestHandler):
             "paris": {"lat": 48.8566, "lon": 2.3522, "country": "法国"},
             "singapore": {"lat": 1.3521, "lon": 103.8198, "country": "新加坡"},
         }
-
+        
         city_lower = city.lower()
         info = city_data.get(city_lower, city_data.get("北京"))
-
+        
         self.send_json({
             "city": city,
             "country": info["country"],
@@ -645,7 +636,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
             "google_maps_url": f"https://www.google.com/maps?q={info['lat']},{info['lon']}",
             "bing_maps_url": f"https://www.bing.com/maps?cp={info['lat']}~{info['lon']}&lvl=12",
         })
-
+    
     def handle_get_user_location(self, user_id: str) -> None:
         city = TaskStore(self.db_path).get_memory("user_location", user_id=user_id)
         if not city:
@@ -660,19 +651,21 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 "is_default": False,
                 "message": f"当前保存的位置是：{city}"
             })
-
+    
     def handle_set_user_location(self, user_id: str) -> None:
         payload = self.read_json()
         city = payload.get("city")
         if not city:
             self.send_json({"error": "需要提供城市名称"}, HTTPStatus.BAD_REQUEST)
             return
+        
         TaskStore(self.db_path).set_memory("user_location", city, user_id=user_id)
-        self.send_json({"message": f"已设置默认位置为：{city}", "city": city})
+        self.send_json({
+            "message": f"已设置默认位置为：{city}",
+            "city": city
+        })
 
-    # ---- v1 新增：子任务相关 ----
-
-    def _extract_task_id_from_path(self, path: str) -> int:
+    def _extract_task_id(self, path: str) -> int:
         """Extract task ID from path like /api/tasks/{id}/subtasks"""
         parts = path.split("/")
         for i, part in enumerate(parts):
@@ -685,7 +678,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
     def handle_get_subtasks(self, path: str, user_id: str) -> None:
         """Get all subtasks for a parent task"""
-        task_id = self._extract_task_id_from_path(path)
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
@@ -694,7 +687,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
     def handle_get_task_with_subtasks(self, path: str, user_id: str) -> None:
         """Get a task with all its subtasks"""
-        task_id = self._extract_task_id_from_path(path)
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
@@ -709,29 +702,30 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
     def handle_create_subtask(self, path: str, user_id: str) -> None:
         """Create a new subtask"""
-        from .parser import parse_task_text
-
-        task_id = self._extract_task_id_from_path(path)
+        from ..agent_app import parse_task_text
+        from ..models import Priority
+        
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         payload = self.read_json()
         title = payload.get("title")
         if not title:
             self.send_json({"error": "需要提供任务标题"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         due_at_str = payload.get("due_at")
         priority_str = payload.get("priority", "medium")
         try:
             priority = Priority(priority_str) if priority_str in Priority._value2member_map_ else Priority.MEDIUM
         except ValueError:
             priority = Priority.MEDIUM
-
+        
         parsed = parse_task_text(f"{due_at_str or ''} {title}")
         chosen_priority = priority if priority_str in Priority._value2member_map_ else parsed.priority
-
+        
         task = TaskStore(self.db_path).create_subtask(
             task_id,
             title,
@@ -742,31 +736,33 @@ class MomentumHandler(BaseHTTPRequestHandler):
             tags=payload.get("tags"),
             user_id=user_id,
         )
-        self.send_json({"message": f"已创建子任务 #{task.id}", "task": task_to_json(task)})
+        self.send_json({
+            "message": f"已创建子任务 #{task.id}",
+            "task": task_to_json(task)
+        })
 
     def handle_bulk_create_subtasks(self, path: str, user_id: str) -> None:
         """Bulk create multiple subtasks"""
-        task_id = self._extract_task_id_from_path(path)
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         payload = self.read_json()
         subtasks = payload.get("subtasks", [])
         if not subtasks:
             self.send_json({"error": "需要提供子任务列表"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         created = TaskStore(self.db_path).bulk_create_subtasks(task_id, subtasks, user_id=user_id)
         self.send_json({
             "message": f"已创建 {len(created)} 个子任务",
             "tasks": [task_to_json(t) for t in created]
         })
 
-    # ---- v1 新增：任务关联关系 ----
-
     def handle_get_dependencies(self, path: str, user_id: str) -> None:
-        task_id = self._extract_task_id_from_path(path)
+        """Get tasks that the given task depends on"""
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
@@ -774,7 +770,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
         self.send_json({"dependencies": [task_to_json(t) for t in dependencies]})
 
     def handle_get_dependents(self, path: str, user_id: str) -> None:
-        task_id = self._extract_task_id_from_path(path)
+        """Get tasks that depend on the given task"""
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
@@ -782,12 +779,15 @@ class MomentumHandler(BaseHTTPRequestHandler):
         self.send_json({"dependents": [task_to_json(t) for t in dependents]})
 
     def handle_get_task_relations(self, path: str, user_id: str) -> None:
-        task_id = self._extract_task_id_from_path(path)
+        """Get all task relations for a task"""
+        from ..models import TaskRelation
+        
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
         relations = TaskStore(self.db_path).get_task_relations(task_id, user_id=user_id)
-
+        
         def relation_to_json(r: TaskRelation) -> dict:
             return {
                 "id": r.id,
@@ -796,26 +796,27 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 "relation_type": r.relation_type.value,
                 "created_at": r.created_at.isoformat()
             }
-
+        
         self.send_json({"relations": [relation_to_json(r) for r in relations]})
 
     def handle_add_dependency(self, path: str, user_id: str) -> None:
-        task_id = self._extract_task_id_from_path(path)
+        """Add a task dependency"""
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         payload = self.read_json()
         depends_on_task_id = payload.get("depends_on_task_id")
         if not depends_on_task_id:
             self.send_json({"error": "需要提供依赖的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         relation = TaskStore(self.db_path).add_dependency(task_id, depends_on_task_id, user_id=user_id)
         if not relation:
             self.send_json({"error": "无法创建依赖关系，请检查任务是否存在"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         self.send_json({
             "message": f"已创建依赖关系：任务 #{task_id} 依赖任务 #{depends_on_task_id}",
             "source_task_id": task_id,
@@ -823,30 +824,33 @@ class MomentumHandler(BaseHTTPRequestHandler):
         })
 
     def handle_add_task_relation(self, path: str, user_id: str) -> None:
-        task_id = self._extract_task_id_from_path(path)
+        """Add a task relation"""
+        from ..models import TaskRelationType
+        
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         payload = self.read_json()
         target_task_id = payload.get("target_task_id")
         relation_type_str = payload.get("relation_type", "relates_to")
-
+        
         if not target_task_id:
             self.send_json({"error": "需要提供目标任务ID"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         try:
             relation_type = TaskRelationType(relation_type_str)
         except ValueError:
             self.send_json({"error": "无效的关系类型，请使用：depends_on, blocks, relates_to, follows, parent_of"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         relation = TaskStore(self.db_path).add_task_relation(task_id, target_task_id, relation_type, user_id=user_id)
         if not relation:
             self.send_json({"error": "无法创建关系，请检查任务是否存在"}, HTTPStatus.BAD_REQUEST)
             return
-
+        
         self.send_json({
             "message": f"已创建关系：任务 #{task_id} {relation_type_str} 任务 #{target_task_id}",
             "source_task_id": task_id,
@@ -855,7 +859,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
         })
 
     def handle_is_task_blocked(self, path: str, user_id: str) -> None:
-        task_id = self._extract_task_id_from_path(path)
+        """Check if a task is blocked by incomplete dependencies"""
+        task_id = self._extract_task_id(path)
         if task_id < 0:
             self.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
             return

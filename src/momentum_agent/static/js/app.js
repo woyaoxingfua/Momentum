@@ -7,6 +7,7 @@ import { initTasks, saveEdit, loadTasks, setTaskStatusFilter } from "./tasks.js"
 import { initChat, setAfterChat, sendChat } from "./chat.js";
 import { initAdvice, loadAdvice, loadReview } from "./advice.js";
 import { initConfig, loadConfig, saveConfig } from "./config.js";
+import { initHeartbeat, loadHeartbeatConfig, startHeartbeatChecks } from "./heartbeat.js";
 
 const els = {
   taskInput: document.querySelector("#taskInput"),
@@ -21,6 +22,9 @@ const els = {
   tasks: document.querySelector("#tasks"),
   taskCount: document.querySelector("#taskCount"),
   adviceText: document.querySelector("#adviceText"),
+  heartbeatSection: document.querySelector("#heartbeatSection"),
+  heartbeatText: document.querySelector("#heartbeatText"),
+  heartbeatDismiss: document.querySelector("#heartbeatDismiss"),
   chatForm: document.querySelector("#chatForm"),
   chatInput: document.querySelector("#chatInput"),
   chatLog: document.querySelector("#chatLog"),
@@ -31,11 +35,16 @@ const els = {
   editDue: document.querySelector("#editDue"),
   editPriority: document.querySelector("#editPriority"),
   editEstimate: document.querySelector("#editEstimate"),
+  editTags: document.querySelector("#editTags"),
   editNotes: document.querySelector("#editNotes"),
   editCancelButton: document.querySelector("#editCancelButton"),
   configCapacity: document.querySelector("#configCapacity"),
   configWorkStart: document.querySelector("#configWorkStart"),
   configWorkEnd: document.querySelector("#configWorkEnd"),
+  configHeartbeatEnabled: document.querySelector("#configHeartbeatEnabled"),
+  configHeartbeatStart: document.querySelector("#configHeartbeatStart"),
+  configHeartbeatEnd: document.querySelector("#configHeartbeatEnd"),
+  configHeartbeatInterval: document.querySelector("#configHeartbeatInterval"),
   configSaveButton: document.querySelector("#configSaveButton"),
 };
 
@@ -172,3 +181,8 @@ refreshAll().catch((error) => {
   els.adviceText.textContent = error.message;
 });
 loadConfig();
+
+// 初始化心跳
+initHeartbeat(els);
+loadHeartbeatConfig();
+startHeartbeatChecks();

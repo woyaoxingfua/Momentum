@@ -22,7 +22,7 @@ from .agent_app import (
     start_task_cmd,
 )
 from .config import DEFAULT_USER_ID, get_current_user
-from .logger import get_logger, init_from_env
+from .logger import get_logger, init_from_env, setup_logging
 from .models import TaskStatus
 from .storage import TaskStore
 from .web import run_server
@@ -34,6 +34,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="momentum-agent")
     parser.add_argument("--db", default=".momentum/tasks.db", help="SQLite database path.")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging.")
+    parser.add_argument("--log-file", type=Path, default=None, help="Override log file path (default: logs/momentum-YYYY-MM-DD.log).")
+    parser.add_argument("--log-dir", type=Path, default=None, help="Override log directory (default: logs/).")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     add_parser = subparsers.add_parser("add", help="Create a task from natural language.")
@@ -55,6 +57,7 @@ def main() -> None:
     edit_parser.add_argument("--priority", choices=["low", "medium", "high"])
     edit_parser.add_argument("--estimate", type=int, dest="estimated_minutes")
     edit_parser.add_argument("--notes")
+    edit_parser.add_argument("--tags", nargs="+", help="Tags for the task, e.g. --tags work urgent personal")
 
     postpone_parser = subparsers.add_parser("postpone", help="Postpone a task by N days.")
     postpone_parser.add_argument("task_id", type=int)
@@ -100,6 +103,10 @@ def main() -> None:
         os.environ["MOMENTUM_LOG_LEVEL"] = "DEBUG"
     init_from_env()
 
+    # CLI 显式指定日志文件/目录时，追加文件 handler
+    if args.log_file or args.log_dir:
+        setup_logging(log_file=args.log_file, log_dir=args.log_dir)
+
     db_path = Path(args.db)
     store = TaskStore(db_path)
     user_id = get_current_user()
@@ -120,7 +127,7 @@ def main() -> None:
             store, args.task_id,
             title=args.title, due_at=args.due, priority=args.priority,
             estimated_minutes=args.estimated_minutes, notes=args.notes,
-            user_id=user_id,
+            tags=args.tags, user_id=user_id,
         ))
     elif args.command == "postpone":
         print(postpone_task_cmd(store, args.task_id, args.days, user_id=user_id))

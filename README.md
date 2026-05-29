@@ -1,20 +1,52 @@
 # Momentum Task Agent
 
-一个基于 OpenAI Agents SDK 的个人任务待办助手。SQLite 存储，CLI + Web 双界面，支持自然语言交互。
+一个基于 OpenAI Agents SDK 的个人任务待办助手。SQLite 存储，CLI + Web 双界面，支持自然语言交互、任务关系、标签系统、心跳提醒、AI 视觉识别。
 
 ## 功能
 
+### 核心功能
 - **自然语言任务管理** — "明天下午3点交水费" 自动解析时间、优先级、重复频率
 - **任务全生命周期** — 待办 → 进行中 → 已完成 / 已放弃，一键切换
 - **大任务拆分** — AI 自动将目标拆为 3-5 个可执行子任务
 - **重复任务** — 每天 / 每周 / 每月，完成后自动生成下一期
-- **AI Agent 对话** — 14 个工具的自主 agent：查任务、建任务、给建议、记偏好、识别模式
+- **AI Agent 对话** — 19 个工具的自主 agent：查任务、建任务、给建议、记偏好、识别模式
 - **会话记忆** — SQLiteSession 持久化，重启不丢对话上下文
 - **流式输出** — 打字机效果，边想边说
 - **用户认证** — 注册 / 登录 / 会话管理，PBKDF2 密码哈希
 - **偏好设置** — 每日可用时间、工作时段，影响建议逻辑
 - **数据导出导入** — JSON 备份还原
 - **无 API Key 也能用** — 纯本地 regex 解析器 + 模板计划，完全离线
+- **输入/输出 Guardrails** — 防空输入、防超长输出，自动拦截异常内容
+
+### 标签系统
+- **任务标签** — 给任务打标签（工作、紧急、学习…），灵活分类
+- **按标签筛选** — 查询某个标签下的所有任务
+- **批量打标签** — 一次给多个任务加标签
+
+### 任务关系
+- **5 种关系类型** — `depends_on`（依赖）、`blocks`（阻塞）、`relates_to`（关联）、`parent_of`（父子）、`follows`（顺序）
+- **依赖检查** — 查询任务是否被阻塞、依赖链是否完整
+- **子任务** — 创建子任务、批量创建子任务、查看子任务树
+- **关系图** — 查询任务的所有关系、前序/后序任务
+
+### 心跳提醒
+- **主动建议** — 根据时间段、任务优先级、用户精力自动推荐下一步
+- **可配置** — 设置提醒频率、工作时段、免打扰模式
+- **时间感知** — 早晨推荐高优先级、下午推荐执行中任务、傍晚提醒截止日
+
+### 批量操作
+- **批量完成** — 一键完成多个任务
+- **批量开始** — 一键开始多个任务
+- **批量打标签** — 一键给多个任务加标签
+
+### AI 视觉
+- **图片识别** — 上传图片（image_base64），AI 视觉模型分析内容
+- **Vision 模型** — 支持 OpenAI-compatible 视觉模型（如 GPT-4o）
+
+### 服务集成
+- **天气服务** — 查询当前天气，辅助任务建议
+- **位置服务** — 设置/获取用户位置，天气查询自动关联
+- **通知服务** — 任务提醒通知框架
 
 ## 快速开始
 
@@ -50,6 +82,7 @@ momentum-agent list --status doing           # 进行中
 momentum-agent start 1                       # 开始做
 momentum-agent done 1                        # 完成
 momentum-agent edit 1 --priority high        # 编辑
+momentum-agent edit 1 --tags 工作,紧急        # 打标签
 momentum-agent postpone 1 --days 5           # 推迟
 momentum-agent drop 1                        # 放弃
 momentum-agent reopen 2                      # 恢复
@@ -83,12 +116,16 @@ http://127.0.0.1:8765
 
 - 登录注册 → 任务工作台
 - 状态标签筛选：待办 | 进行中 | 已完成 | 已放弃
+- **标签筛选** — 按标签过滤任务
 - 搜索框实时过滤
 - 右侧 Agent 对话面板，流式输出
 - 偏好设置面板
+- **心跳提醒设置** — 配置提醒频率和时段
 - 导出 / 导入
 
 ## API
+
+### 基础接口
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
@@ -117,45 +154,119 @@ http://127.0.0.1:8765
 | POST | `/api/import` | Yes | 导入数据 |
 | GET | `/api/provider` | Yes | AI 服务商状态 |
 
+### 标签接口
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/api/tags` | Yes | 获取所有标签 |
+| GET | `/api/tags/{tag}/tasks` | Yes | 按标签查询任务 |
+| POST | `/api/tasks/batch/tags` | Yes | 批量打标签 |
+
+### 心跳提醒接口
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/api/heartbeat/config` | Yes | 获取心跳配置 |
+| POST | `/api/heartbeat/config` | Yes | 设置心跳配置 |
+| GET | `/api/heartbeat/suggestion` | Yes | 获取当前建议 |
+
+### 天气 & 位置接口
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/api/weather` | Yes | 获取天气信息 |
+| GET | `/api/location` | Yes | 获取位置信息 |
+| GET | `/api/user/location` | Yes | 获取用户位置 |
+| POST | `/api/user/location` | Yes | 设置用户位置 |
+
+### 子任务 & 关系接口
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/api/tasks/{id}/subtasks` | Yes | 获取子任务 |
+| GET | `/api/tasks/{id}/with-subtasks` | Yes | 获取任务+子任务 |
+| POST | `/api/tasks/{id}/subtasks` | Yes | 创建子任务 |
+| POST | `/api/tasks/{id}/subtasks/bulk` | Yes | 批量创建子任务 |
+| GET | `/api/tasks/{id}/dependencies` | Yes | 获取前置依赖 |
+| GET | `/api/tasks/{id}/dependents` | Yes | 获取后续被依赖 |
+| GET | `/api/tasks/{id}/relations` | Yes | 获取所有关系 |
+| POST | `/api/tasks/{id}/dependencies` | Yes | 添加依赖关系 |
+| POST | `/api/tasks/{id}/relations` | Yes | 添加任意关系 |
+| GET | `/api/tasks/{id}/is-blocked` | Yes | 检查是否被阻塞 |
+
+### 批量操作接口
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/api/tasks/batch/complete` | Yes | 批量完成任务 |
+| POST | `/api/tasks/batch/start` | Yes | 批量开始任务 |
+| POST | `/api/tasks/batch/tags` | Yes | 批量打标签 |
+
 ## 技术栈
 
 | 层 | 选型 |
 |---|---|
 | AI SDK | OpenAI Agents SDK (OpenAIChatCompletionsModel) |
 | 模型 | DeepSeek V4 Flash / GPT-4.1-mini / 任意 OpenAI-compatible |
-| 数据库 | SQLite（自动 schema 迁移） |
+| Vision | OpenAI-compatible 视觉模型（如 GPT-4o） |
+| 数据库 | SQLite（自动 schema 迁移，支持 tags + task_relations 表） |
 | Web 服务 | Python stdlib `http.server`（零第三方依赖） |
 | 前端 | 原生 JS ES Modules，零构建步骤 |
 | 认证 | PBKDF2-SHA256 + Session Token |
-| 日志 | Python `logging`（INFO/DEBUG，控制台+文件） |
+| Agent Guardrails | 输入/输出双守卫（防空输入、防超长输出） |
+| 日志 | Python `logging` + `RotatingFileHandler`，默认写文件（`logs/` 目录，10MB 轮转 × 5 备份） |
 
 ## 项目结构
 
 ```
 src/momentum_agent/
-├── cli.py          # CLI 入口
-├── web.py          # HTTP 服务 + REST API
-├── agent_app.py     # Agent 核心：工具、会话、流式、guardrails
-├── storage.py      # SQLite 存储层
-├── auth.py         # 密码哈希 + 令牌
-├── config.py       # 环境变量加载
-├── parser.py       # 中文自然语言解析（fallback）
-├── planner.py      # 模板任务拆分（fallback）
-├── context.py      # 任务评分 + 建议 + 复盘
-├── models.py       # 数据模型
-├── logger.py       # 日志配置
+├── cli.py              # CLI 入口（--tags 支持）
+├── web.py              # HTTP 服务 + REST API（40+ 端点）
+├── agent_app.py        # Agent 核心：19 工具、会话、流式、guardrails
+├── storage.py          # SQLite 存储层（tags/relations/batch/heartbeat）
+├── auth.py             # 密码哈希 + 令牌
+├── config.py           # 环境变量加载
+├── parser.py           # 中文自然语言解析（fallback）
+├── planner.py          # 模板任务拆分（fallback）
+├── context.py          # 任务评分 + 建议 + 复盘 + 心跳建议
+├── models.py           # 数据模型（Task/TaskRelation/TaskRelationType/Priority/TaskStatus）
+├── logger.py           # 日志系统（默认文件+控制台，request_id 追踪，按日期轮转）
+├── agents/             # 模块化 Agent 架构
+│   ├── __init__.py
+│   ├── agent.py        # Agent 构建 + 工具注册
+│   └── tools/          # 工具子模块
+│       ├── __init__.py
+│       ├── task_tools.py       # 任务 CRUD 工具
+│       ├── subtask_tools.py    # 子任务工具
+│       ├── relation_tools.py   # 关系工具
+│       ├── weather_tools.py    # 天气工具
+│       └── heartbeat_tools.py  # 心跳工具
+├── services/           # 业务服务层
+│   ├── __init__.py
+│   ├── weather.py      # 天气服务
+│   ├── location.py     # 位置服务
+│   ├── heartbeat.py    # 心跳提醒服务
+│   ├── task_hierarchy.py  # 任务层级服务
+│   └── notification.py # 通知服务
+├── web/                # Web 子包（v1 兼容层）
+│   ├── __init__.py
+│   ├── handlers.py     # 请求处理器
+│   └── legacy_server.py # 旧版服务器兼容
 └── static/
-    ├── index.html  # 主界面
-    ├── login.html  # 登录注册
-    ├── app.css     # 样式
-    ├── app.js      # 旧版（保留）
-    └── js/         # ES Modules
+    ├── index.html      # 主界面（含心跳/标签 UI）
+    ├── login.html      # 登录注册
+    ├── app.css         # 样式
+    ├── app.js          # 旧版（保留）
+    └── js/             # ES Modules
         ├── api.js
         ├── app.js
-        ├── tasks.js
+        ├── tasks.js    # 任务列表（标签显示/编辑）
         ├── chat.js
         ├── advice.js
-        └── config.js
+        ├── config.js   # 配置（含心跳设置）
+        ├── heartbeat.js    # 心跳提醒前端
+        ├── vision-demo.js  # 视觉演示
+        └── vision-guide.js # 视觉引导
 tests/
 ├── test_parser.py
 ├── test_config.py
@@ -172,6 +283,21 @@ A: 注册不同账号。数据完全隔离。或者设环境变量 `MOMENTUM_USE
 
 **Q: 不配 API key 能用吗？**
 A: 能。任务 CRUD、模板规划、规则建议全都可以离线工作。只有 Agent 对话需要 API key。
+
+**Q: 标签怎么用？**
+A: CLI 用 `--tags` 参数，Web 界面在任务编辑框输入标签。API 用 `/api/tags` 系列端点。
+
+**Q: 心跳提醒是什么？**
+A: 系统根据时间、任务优先级、用户精力状态自动推荐下一步该做什么。可在 Web 界面配置提醒频率和时段。
+
+**Q: 任务关系有什么用？**
+A: 设置任务间依赖（"B 依赖 A 完成"），系统会自动检查阻塞状态，防止开始被阻塞的任务。
+
+**Q: 日志文件在哪？**
+A: 默认写入项目根目录下 `logs/momentum-YYYY-MM-DD.log`，自动按日期命名、10MB 轮转、保留 5 个备份。设 `MOMENTUM_LOG_FILE=off` 可关闭文件日志。
+
+**Q: 日志级别怎么调？**
+A: CLI 加 `-v`（DEBUG），或设环境变量 `MOMENTUM_LOG_LEVEL=DEBUG`。文件日志始终记录全部级别（DEBUG 及以上），控制台跟随设定级别。
 
 ## License
 

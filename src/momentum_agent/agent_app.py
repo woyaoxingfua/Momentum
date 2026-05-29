@@ -439,10 +439,60 @@ def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
         payload = {k: v for k, v in all_mem.items() if k.startswith("agent_note_")}
         return _to_json(payload)
 
+    # ── v1 新增：标签 & 批量操作工具 ──────────────────────────────────
+
+    @function_tool
+    def get_all_tags() -> str:
+        """Get all tags used across user's tasks (JSON array string)."""
+        tags = store.get_all_tags(user_id=user_id)
+        return _to_json(tags)
+
+    @function_tool
+    def get_tasks_by_tag(tag: str) -> str:
+        """Get all tasks with a specific tag (JSON string)."""
+        tasks = store.get_tasks_by_tag(tag, user_id=user_id)
+        payload = [
+            {"id": t.id, "title": t.title, "status": t.status.value,
+             "priority": t.priority.value,
+             "due_at": t.due_at.isoformat() if t.due_at else None,
+             "tags": t.tags}
+            for t in tasks
+        ]
+        return _to_json(payload)
+
+    @function_tool
+    def add_tags_to_task(task_id: int, tags: list[str]) -> str:
+        """Add one or more tags to a task. Existing tags are preserved."""
+        task = store._get_task(task_id)
+        if not task or (task.user_id and task.user_id != user_id):
+            return f"任务 #{task_id} 不存在或不属于你"
+        existing_tags = task.tags or []
+        all_tags = list(set(existing_tags + tags))
+        updated = store.update_task(task_id, tags=all_tags, user_id=user_id)
+        if not updated:
+            return f"更新任务 #{task_id} 失败"
+        tags_info = f"，标签：{', '.join(updated.tags)}" if updated.tags else ""
+        return f"已更新任务 #{updated.id}：{updated.title}{tags_info}"
+
+    @function_tool
+    def batch_complete_tasks(task_ids: list[int]) -> str:
+        """Mark multiple tasks as done at once. Pass a list of task IDs."""
+        count = store.batch_update_status(task_ids, TaskStatus.DONE, user_id=user_id)
+        return f"已批量完成 {count} 个任务"
+
+    @function_tool
+    def batch_start_tasks(task_ids: list[int]) -> str:
+        """Mark multiple tasks as in-progress at once. Pass a list of task IDs."""
+        count = store.batch_update_status(task_ids, TaskStatus.DOING, user_id=user_id)
+        return f"已批量开始 {count} 个任务"
+
     return [
         create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context,
         complete_task, start_task, drop_task, postpone_task, search_tasks, edit_task,
         save_note, get_my_notes,
+        # v1 新增工具
+        get_all_tags, get_tasks_by_tag, add_tags_to_task,
+        batch_complete_tasks, batch_start_tasks,
     ]
 
 
@@ -640,11 +690,13 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 - 只给**简短**的概览/建议（除非用户要求详细）
 - 如果发现异常（过期/堆积/长期没进展），再补充提醒
 
-## 工具清单（14 个）
+## 工具清单（19 个）
 
 **总览：** get_overview — 一次拿到全部状态、过期数、即将到期数、前 3 优先级任务
 **查询：** list_tasks, search_tasks, get_daily_review, get_user_context
 **操作：** create_task, create_plan, edit_task, start_task, complete_task, drop_task, postpone_task
+**标签：** get_all_tags, get_tasks_by_tag, add_tags_to_task
+**批量：** batch_complete_tasks, batch_start_tasks
 **记忆：** save_note, get_my_notes
 
 ## 必须主动做的事
@@ -762,13 +814,21 @@ async def _build_output_guardrail():
     return sanitize_output
 
 
-async def run_agent_message(db_path: Path, message: str, *, user_id: str = DEFAULT_USER_ID) -> str:
-    """Run a message through the full agent system (CLI and web non-streaming)."""
-    log.info("agent_message user=%r msg=%r", user_id, message[:80])
+async def run_agent_message(
+    db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
+) -> str:
+    """Run a message through the full agent system (CLI and web non-streaming).
+    
+    Supports image_base64 for vision tasks: pass a base64-encoded JPEG/PNG image
+    and the agent will analyze it and extract tasks from the image.
+    """
+    log.info("agent_message user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
     provider = load_provider_config()
 
     if not provider.is_configured:
         store = TaskStore(db_path)
+        if image_base64:
+            return "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
         if should_review(message):
             return local_review(store, user_id=user_id)
         if should_plan(message):
@@ -790,17 +850,39 @@ async def run_agent_message(db_path: Path, message: str, *, user_id: str = DEFAU
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
 
-    result = await Runner.run(
-        agent, message,
-        max_turns=30,
-        session=session,
-        hooks=_make_hooks(),
-        run_config=RunConfig(
-            input_guardrails=[guardrail],
-            output_guardrails=[out_guardrail],
-            workflow_name="momentum-chat",
-        ),
-    )
+    # 图片识别：构造多模态消息
+    if image_base64:
+        agent_input = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": message if message else "请分析这张图片，提取其中的任务信息并创建相应的待办事项。"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+                ],
+            }
+        ]
+        result = await Runner.run(
+            agent, agent_input,
+            max_turns=30,
+            session=session,
+            hooks=_make_hooks(),
+            run_config=RunConfig(
+                output_guardrails=[out_guardrail],
+                workflow_name="momentum-vision",
+            ),
+        )
+    else:
+        result = await Runner.run(
+            agent, message,
+            max_turns=30,
+            session=session,
+            hooks=_make_hooks(),
+            run_config=RunConfig(
+                input_guardrails=[guardrail],
+                output_guardrails=[out_guardrail],
+                workflow_name="momentum-chat",
+            ),
+        )
 
     reply = result.final_output
     log.info("agent done: user=%r len=%d", user_id, len(reply))
@@ -808,14 +890,21 @@ async def run_agent_message(db_path: Path, message: str, *, user_id: str = DEFAU
 
 
 async def run_agent_message_stream(
-    db_path: Path, message: str, *, user_id: str = DEFAULT_USER_ID
+    db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
 ) -> AsyncIterator[str]:
-    """Stream agent response via Runner.run_streamed() with session + hooks + guardrails."""
-    log.info("agent_stream user=%r msg=%r", user_id, message[:80])
+    """Stream agent response via Runner.run_streamed() with session + hooks + guardrails.
+
+    Supports image_base64 for vision tasks. When image is provided, runs non-streamed
+    and yields the result line by line.
+    """
+    log.info("agent_stream user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
     provider = load_provider_config()
 
     if not provider.is_configured:
         store = TaskStore(db_path)
+        if image_base64:
+            yield "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
+            return
         if should_review(message):
             yield local_review(store, user_id=user_id)
         elif should_plan(message):
@@ -839,6 +928,32 @@ async def run_agent_message_stream(
     session = _get_session(db_path, user_id)
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
+
+    # 图片识别：非流式处理后逐行 yield
+    if image_base64:
+        agent_input = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": message if message else "请分析这张图片，提取其中的任务信息并创建相应的待办事项。"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+                ],
+            }
+        ]
+        result_vision = await Runner.run(
+            agent, agent_input,
+            max_turns=30,
+            session=session,
+            hooks=_make_hooks(),
+            run_config=RunConfig(
+                output_guardrails=[out_guardrail],
+                workflow_name="momentum-vision-stream",
+            ),
+        )
+        reply = result_vision.final_output
+        log.info("agent_vision done: user=%r len=%d", user_id, len(reply))
+        yield reply
+        return
 
     result = Runner.run_streamed(
         agent, message,
