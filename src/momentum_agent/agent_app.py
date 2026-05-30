@@ -706,29 +706,10 @@ def _get_session(db_path: Path, user_id: str):
     from agents import SessionSettings
     
     # 每次都返回一个全新的内存会话
-    base_session = Session(
+    return Session(
         session_id=f"{user_id}-{SESSION_VERSION}-{int(datetime.now().timestamp())}",
-        session_settings=SessionSettings(limit=SESSION_LIMIT),
+        session_settings=SessionSettings(limit=0),
     )
-    
-    class _NoHistorySession:
-        session_id = base_session.session_id
-        session_settings = base_session.session_settings
-        
-        async def get_items(self, limit: int | None = None):
-            items = await base_session.get_items(limit)
-            return _sanitize_items(items)
-        
-        async def add_items(self, items):
-            await base_session.add_items(_sanitize_items(list(items)))
-        
-        async def pop_item(self):
-            return await base_session.pop_item()
-        
-        async def clear_session(self):
-            return await base_session.clear_session()
-    
-    return _NoHistorySession()
 
 
 def _make_hooks():
