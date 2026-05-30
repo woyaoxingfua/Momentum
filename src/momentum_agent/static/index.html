@@ -22,8 +22,13 @@
         </header>
 
         <section class="composer" aria-label="创建任务">
-          <textarea id="taskInput" rows="3" placeholder="例如：明天下午整理产品经理面试材料"></textarea>
+          <div id="imagePreview" class="image-preview" style="display: none;"></div>
+          <textarea id="taskInput" rows="3" placeholder="例如：明天下午整理产品经理面试材料&#10;也可以上传图片，让 AI 从中提取任务"></textarea>
           <div class="composer-actions">
+            <label id="imageUploadLabel" class="image-upload-label" title="上传图片">
+              <input id="imageUpload" type="file" accept="image/*" multiple hidden />
+              <span>📷</span>
+            </label>
             <button id="addTaskButton" class="primary">新增任务</button>
             <button id="planTaskButton">拆成计划</button>
             <button id="adviseButton">今日建议</button>

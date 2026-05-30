@@ -238,11 +238,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
     def handle_create_task(self, user_id: str) -> None:
         payload = self.read_json()
         text = str(payload.get("text", "")).strip()
-        if not text:
+        images = payload.get("images", [])
+        if not text and not images:
             self.send_json({"error": "任务内容不能为空。"}, HTTPStatus.BAD_REQUEST)
             return
         store = TaskStore(self.db_path)
-        message = create_task_from_text(store, text, user_id=user_id)
+        message = create_task_from_text(store, text, user_id=user_id, images=images)
         self.send_json({"message": message, "tasks": [task_to_json(t) for t in store.list_tasks(user_id=user_id)]})
 
     def handle_create_plan(self, user_id: str) -> None:

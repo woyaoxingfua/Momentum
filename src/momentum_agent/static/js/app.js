@@ -69,6 +69,7 @@ async function refreshAll() {
 
 let searchTimer = null;
 let isProviderConfigured = false;
+let uploadedImages = [];
 
 function onSearchInput() {
   clearTimeout(searchTimer);
@@ -113,15 +114,70 @@ async function importData(file) {
 
 async function addTask() {
   const text = els.taskInput.value.trim();
-  if (!text) return;
+  if (!text && uploadedImages.length === 0) return;
   els.addTaskButton.disabled = true;
   try {
-    await requestJson("/api/tasks", { method: "POST", body: JSON.stringify({ text }) });
+    const body = { text: text || "从图片中提取的任务" };
+    if (uploadedImages.length > 0) {
+      body.images = uploadedImages;
+    }
+    await requestJson("/api/tasks", { method: "POST", body: JSON.stringify(body) });
     els.taskInput.value = "";
+    clearImages();
     await refreshAll();
   } finally {
     els.addTaskButton.disabled = false;
   }
+}
+
+function clearImages() {
+  uploadedImages = [];
+  const preview = document.querySelector("#imagePreview");
+  if (preview) {
+    preview.innerHTML = "";
+    preview.style.display = "none";
+  }
+}
+
+function handleImageUpload(event) {
+  const files = event.target.files;
+  if (!files || files.length === 0) return;
+  
+  const preview = document.querySelector("#imagePreview");
+  preview.style.display = "flex";
+  
+  Array.from(files).forEach(file => {
+    if (!file.type.startsWith("image/")) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const base64 = e.target.result.split(",")[1];
+      uploadedImages.push(base64);
+      
+      const item = document.createElement("div");
+      item.className = "image-preview-item";
+      item.innerHTML = `
+        <img src="${e.target.result}" alt="Preview" />
+        <button class="remove-btn" title="移除">×</button>
+      `;
+      
+      item.querySelector(".remove-btn").onclick = () => {
+        const index = uploadedImages.indexOf(base64);
+        if (index > -1) {
+          uploadedImages.splice(index, 1);
+          item.remove();
+          if (uploadedImages.length === 0) {
+            preview.style.display = "none";
+          }
+        }
+      };
+      
+      preview.appendChild(item);
+    };
+    reader.readAsDataURL(file);
+  });
+  
+  event.target.value = "";
 }
 
 async function planTask() {
@@ -184,6 +240,7 @@ initConfig(
 );
 
 els.addTaskButton.addEventListener("click", addTask);
+document.querySelector("#imageUpload").addEventListener("change", handleImageUpload);
 els.planTaskButton.addEventListener("click", planTask);
 els.adviseButton.addEventListener("click", async () => {
   if (isProviderConfigured) {

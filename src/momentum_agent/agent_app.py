@@ -33,10 +33,71 @@ def _parsed_to_message(parsed: ParsedTask, store: TaskStore, *, user_id: str = D
     return f"已创建任务 #{task.id}：{task.title}{due}{recurrence_label}"
 
 
-def create_task_from_text(store: TaskStore, text: str, *, user_id: str = DEFAULT_USER_ID) -> str:
-    log.info("create_task_from_text user=%r text=%r", user_id, text)
+def supports_vision(model: str) -> bool:
+    """检查模型是否支持视觉功能"""
+    model_lower = model.lower()
+    vision_keywords = [
+        "vision", "gpt-4o", "gpt-4-turbo", "claude-3", "claude-3.5",
+        "gemini", "qwen-vl", "yi-vision", "internvl"
+    ]
+    return any(keyword in model_lower for keyword in vision_keywords)
+
+
+async def _parse_task_with_ai_and_images(text: str, images: list[str], provider: ProviderConfig) -> ParsedTask:
+    """使用视觉模型从图片中提取任务"""
+    from agents import Agent, OpenAIChatCompletionsModel, Runner
+    
+    openai_client = build_openai_client(provider)
+    agent = Agent(
+        name="Task Extractor from Images",
+        instructions="""
+你是一个任务提取专家。请仔细分析用户提供的图片，提取其中的任务信息。
+
+任务提取规则：
+1. title：从图片中识别出要完成的任务或待办事项
+2. due_at：如果图片中包含日期或时间信息，解析为 ISO 8601 格式（YYYY-MM-DDTHH:MM:SS）
+3. priority：如果图片中标注了紧急/重要/优先等关键词，设置为 "high"
+4. estimated_minutes：如果图片中标注了时间，转换为分钟数
+5. notes：记录图片中的额外信息（如来源、背景等）
+6. 如果图片中没有明确的任务，从图片内容推断一个合理的任务
+
+请用中文理解和输出。
+""",
+        model=OpenAIChatCompletionsModel(model=provider.model, openai_client=openai_client),
+        output_type=ParsedTask,
+    )
+    
+    # 构建消息内容
+    content = []
+    if text:
+        content.append({"type": "text", "text": text})
+    for img_base64 in images:
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}})
+    
+    result = await Runner.run(agent, [{"role": "user", "content": content}])
+    return result.final_output_as(ParsedTask)
+
+
+def create_task_from_text(store: TaskStore, text: str, *, user_id: str = DEFAULT_USER_ID, images: list[str] | None = None) -> str:
+    log.info("create_task_from_text user=%r text=%r has_images=%s", user_id, text[:80] if text else "", bool(images))
     user_config = store.get_all_memory(user_id=user_id)
     provider = load_provider_config(user_config)
+    
+    # 如果有图片，检查模型是否支持视觉
+    if images and provider.is_configured:
+        if supports_vision(provider.model):
+            try:
+                parsed = asyncio.run(_parse_task_with_ai_and_images(text, images, provider))
+                return _parsed_to_message(parsed, store, user_id=user_id)
+            except Exception as exc:
+                log.warning("AI vision parse failed, falling back to regex: %s", exc)
+                if not text:
+                    return "抱歉，AI 识别图片失败了。请手动输入任务内容。"
+                parsed = parse_task_text(text)
+        else:
+            log.warning("Model %s does not support vision, skipping image processing", provider.model)
+            return "抱歉，您当前配置的模型不支持视觉识别功能。请使用支持视觉的模型（如 gpt-4o、claude-3-opus 等），或在模型名称中移除图片。"
+    
     if provider.is_configured:
         try:
             parsed = asyncio.run(_parse_task_with_ai(text, provider))
@@ -44,6 +105,8 @@ def create_task_from_text(store: TaskStore, text: str, *, user_id: str = DEFAULT
             log.warning("AI parse failed, falling back to regex: %s", exc)
             parsed = parse_task_text(text)
     else:
+        if images:
+            return "图片识别功能需要配置 AI 模型。请在偏好设置中配置 API Key。"
         parsed = parse_task_text(text)
     return _parsed_to_message(parsed, store, user_id=user_id)
 
