@@ -563,153 +563,7 @@ SESSION_LIMIT: int | None = None
 SESSION_VERSION = "v6"  # 完全禁用持久化历史，仅内存中临时保存，但使用 notes 工具保存记忆
 
 
-def _extract_text(content: object) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for part in content:
-            if isinstance(part, dict):
-                text = part.get("text")
-            else:
-                text = getattr(part, "text", None)
-            if text:
-                parts.append(str(text))
-        return "".join(parts)
-    return str(content)
 
-
-def _is_empty_assistant_message(item: object) -> bool:
-    if not isinstance(item, dict):
-        return False
-    if item.get("role") != "assistant":
-        return False
-    if item.get("tool_calls"):
-        return False
-    text = _extract_text(item.get("content", "")).strip()
-    return not text
-
-
-def _sanitize_items(items: list[object]) -> list[object]:
-    """
-    安全的对话历史清理策略：
-    1. 只保留 user 和 assistant 纯文本对话，过滤掉所有 tool_calls 和 tool 响应
-    2. 这样虽然会丢失一些上下文，但能保证对话历史永远不会出错！
-    """
-    result: list[object] = []
-    
-    for item in items:
-        is_dict = isinstance(item, dict)
-        role = item.get("role") if is_dict else getattr(item, "role", None)
-        tool_calls = item.get("tool_calls") if is_dict else getattr(item, "tool_calls", None)
-        
-        # 跳过空 assistant 消息
-        if is_dict and _is_empty_assistant_message(item):
-            continue
-        
-        # 过滤掉带 tool_calls 的 assistant 消息
-        if role == "assistant" and tool_calls:
-            continue
-        
-        # 过滤掉 tool 响应消息
-        if role == "tool":
-            continue
-        
-        # 只保留纯 user 和 assistant 文本消息
-        result.append(item)
-    
-    return result
-
-
-def _cleanup_session_db(db_path: Path, session_id: str) -> None:
-    if not db_path.exists():
-        return
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_messages'"
-    )
-    if not cur.fetchone():
-        conn.close()
-        return
-    cur.execute(
-        "SELECT id, message_data FROM agent_messages WHERE session_id = ? ORDER BY id",
-        (session_id,),
-    )
-    rows = cur.fetchall()
-    delete_ids: set[int] = set()
-    pending_tool_calls: set[str] = set()
-
-    for msg_id, data in rows:
-        try:
-            payload = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        
-        if _is_empty_assistant_message(payload):
-            delete_ids.add(msg_id)
-            continue
-        
-        # 检查新的格式：role: assistant, tool_calls: [...]
-        role = payload.get("role")
-        if role == "assistant" and payload.get("tool_calls"):
-            for tc in payload.get("tool_calls", []):
-                cid = tc.get("id")
-                if cid:
-                    pending_tool_calls.add(cid)
-            continue
-        
-        # 检查新格式：role: tool
-        if role == "tool":
-            tool_call_id = payload.get("tool_call_id")
-            if tool_call_id and tool_call_id in pending_tool_calls:
-                pending_tool_calls.discard(tool_call_id)
-            continue
-        
-        # 旧格式处理
-        item_type = payload.get("type")
-        if item_type == "function_call":
-            call_id = payload.get("call_id")
-            if call_id:
-                pending_tool_calls.add(call_id)
-            else:
-                delete_ids.add(msg_id)
-        elif item_type == "function_call_output":
-            call_id = payload.get("call_id")
-            if call_id and call_id in pending_tool_calls:
-                pending_tool_calls.discard(call_id)
-            else:
-                delete_ids.add(msg_id)
-    
-    # 如果还有 pending 的 calls，直接清空整个 session 更安全
-    if pending_tool_calls:
-        log.warning("检测到不完整的对话历史，清空整个 session")
-        cur.execute("DELETE FROM agent_messages WHERE session_id = ?", (session_id,))
-    elif delete_ids:
-        cur.executemany(
-            "DELETE FROM agent_messages WHERE id = ?",
-            [(msg_id,) for msg_id in sorted(delete_ids)],
-        )
-    
-    conn.commit()
-    conn.close()
-
-
-def _get_session(db_path: Path, user_id: str):
-    """
-    完全禁用对话历史持久化，每次都是全新会话！
-    但 Agent 可以用 save_note/get_my_notes 工具记住你的偏好。
-    """
-    from agents import Session
-    from agents import SessionSettings
-    
-    # 每次都返回一个全新的内存会话
-    return Session(
-        session_id=f"{user_id}-{SESSION_VERSION}-{int(datetime.now().timestamp())}",
-        session_settings=SessionSettings(limit=0),
-    )
 
 
 def _make_hooks():
@@ -1035,11 +889,29 @@ async def run_agent_message_stream(
     reply = result.final_output
     log.info("agent done: user=%r len=%d", user_id, len(reply))
     
-    # 手动分段输出，模拟流式效果
-    chunk_size = 3
-    for i in range(0, len(reply), chunk_size):
-        yield reply[i:i+chunk_size]
-        await asyncio.sleep(0.01)
+    # 手动分段输出，模拟流式效果 - 更自然的分段策略
+    import re
+    # 根据标点符号和换行来分段，让输出更自然
+    chunks = []
+    current = ""
+    for char in reply:
+        current += char
+        # 在标点符号或一定长度后分段
+        if len(current) >= 10 or char in '，。！？、；："\'）】』》」』、\n':
+            chunks.append(current)
+            current = ""
+    if current:
+        chunks.append(current)
+    
+    # 如果没有合适的分段点，就按字符输出
+    if not chunks:
+        for char in reply:
+            yield char
+            await asyncio.sleep(0.02)
+    else:
+        for chunk in chunks:
+            yield chunk
+            await asyncio.sleep(0.03)
 
 
 def build_openai_client(provider: ProviderConfig):
