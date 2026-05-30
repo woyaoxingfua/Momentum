@@ -41,6 +41,7 @@ const els = {
   configApiKey: document.querySelector("#configApiKey"),
   configApiBase: document.querySelector("#configApiBase"),
   configModel: document.querySelector("#configModel"),
+  configVisionEnabled: document.querySelector("#configVisionEnabled"),
   configCapacity: document.querySelector("#configCapacity"),
   configWorkStart: document.querySelector("#configWorkStart"),
   configWorkEnd: document.querySelector("#configWorkEnd"),
@@ -232,6 +233,7 @@ initConfig(
     configApiKey: els.configApiKey, 
     configApiBase: els.configApiBase,
     configModel: els.configModel,
+    configVisionEnabled: els.configVisionEnabled,
     configCapacity: els.configCapacity, 
     configWorkStart: els.configWorkStart, 
     configWorkEnd: els.configWorkEnd 

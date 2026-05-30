@@ -125,7 +125,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 elif parsed.path == "/api/review":
                     self.send_json({"review": local_review(TaskStore(self.db_path), user_id=user_id)})
                 elif parsed.path == "/api/provider":
-                self.send_json(provider_status())
+                    self.send_json(provider_status())
                 elif parsed.path == "/api/config":
                     self.send_json({"config": get_user_config_cmd(TaskStore(self.db_path), user_id=user_id)})
                 elif parsed.path == "/api/me":
@@ -238,11 +238,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
     def handle_create_task(self, user_id: str) -> None:
         payload = self.read_json()
         text = str(payload.get("text", "")).strip()
-        if not text:
+        images = payload.get("images", [])
+        if not text and not images:
             self.send_json({"error": "任务内容不能为空。"}, HTTPStatus.BAD_REQUEST)
             return
         store = TaskStore(self.db_path)
-        message = create_task_from_text(store, text, user_id=user_id)
+        message = create_task_from_text(store, text, user_id=user_id, images=images if images else None)
         self.send_json({"message": message, "tasks": [task_to_json(t) for t in store.list_tasks(user_id=user_id)]})
 
     def handle_create_plan(self, user_id: str) -> None:

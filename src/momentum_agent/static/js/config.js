@@ -19,6 +19,9 @@ export async function loadConfig() {
       if (key.trim() === "api_key" && elements.configApiKey) elements.configApiKey.value = value;
       if (key.trim() === "api_base" && elements.configApiBase) elements.configApiBase.value = value;
       if (key.trim() === "model" && elements.configModel) elements.configModel.value = value;
+      if (key.trim() === "vision_enabled" && elements.configVisionEnabled) {
+        elements.configVisionEnabled.checked = value === "true";
+      }
       if (key.trim() === "daily_capacity_minutes" && elements.configCapacity) elements.configCapacity.value = value;
       if (key.trim() === "working_hours_start" && elements.configWorkStart) elements.configWorkStart.value = value;
       if (key.trim() === "working_hours_end" && elements.configWorkEnd) elements.configWorkEnd.value = value;
@@ -39,6 +42,7 @@ export async function saveConfig() {
       ["api_key", elements.configApiKey?.value || ""],
       ["api_base", elements.configApiBase?.value || ""],
       ["model", elements.configModel?.value || "gpt-4o"],
+      ["vision_enabled", elements.configVisionEnabled?.checked ? "true" : "false"],
       ["daily_capacity_minutes", elements.configCapacity?.value || "45"],
       ["working_hours_start", elements.configWorkStart?.value || "09:00"],
       ["working_hours_end", elements.configWorkEnd?.value || "18:00"],
