@@ -78,6 +78,13 @@ class TaskStore:
         self._init_schema()
         log.info("store opened: %s", self.db_path)
 
+    def _init_schema(self) -> None:
+        log.debug("initializing schema")
+        with self._connect() as conn:
+            conn.executescript(SCHEMA)
+            self._migrate(conn)
+            self._ensure_default_user(conn)
+
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_path)
@@ -91,11 +98,6 @@ class TaskStore:
         finally:
             conn.commit()
             conn.close()
-        log.debug("initializing schema")
-        with self._connect() as conn:
-            conn.executescript(SCHEMA)
-            self._migrate(conn)
-            self._ensure_default_user(conn)
 
     def _ensure_default_user(self, conn: sqlite3.Connection) -> None:
         from .auth import hash_password
