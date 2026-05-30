@@ -967,10 +967,9 @@ async def run_agent_message(
 async def run_agent_message_stream(
     db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
 ) -> AsyncIterator[str]:
-    """Stream agent response via Runner.run_streamed() with session + hooks + guardrails.
+    """Stream agent response by first running non-streamed and then yielding chunks manually.
 
-    Supports image_base64 for vision tasks. When image is provided, runs non-streamed
-    and yields the result line by line.
+    This completely avoids Agents SDK's history management issues.
     """
     log.info("agent_stream user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
     store = TaskStore(db_path)
@@ -1001,7 +1000,7 @@ async def run_agent_message_stream(
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
 
-    # 图片识别：非流式处理后逐行 yield
+    # 完全使用非流式方式运行，然后手动分段输出
     if image_base64:
         agent_input = [
             {
@@ -1012,7 +1011,7 @@ async def run_agent_message_stream(
                 ],
             }
         ]
-        result_vision = await Runner.run(
+        result = await Runner.run(
             agent, agent_input,
             max_turns=30,
             hooks=_make_hooks(),
@@ -1021,43 +1020,26 @@ async def run_agent_message_stream(
                 workflow_name="momentum-vision-stream",
             ),
         )
-        reply = result_vision.final_output
-        log.info("agent_vision done: user=%r len=%d", user_id, len(reply))
-        yield reply
-        return
-
-    result = Runner.run_streamed(
-        agent, message,
-        max_turns=30,
-        hooks=_make_hooks(),
-        run_config=RunConfig(
-            input_guardrails=[guardrail],
-            output_guardrails=[out_guardrail],
-            workflow_name="momentum-chat-stream",
-        ),
-    )
-    full_reply = ""
-    chunk_count = 0
-    async for event in result.stream_events():
-        if event.type == "run_item_stream_event":
-            item = event.item
-            if item.type == "message_output_item":
-                if hasattr(item, "raw_item") and hasattr(item.raw_item, "content"):
-                    for block in item.raw_item.content:
-                        if hasattr(block, "text"):
-                            chunk_count += 1
-                            full_reply += block.text
-                            yield block.text
-            elif item.type == "reasoning_item":
-                pass
-        elif event.type == "raw_response_event":
-            if hasattr(event.data, "delta") and hasattr(event.data.delta, "content"):
-                for block in event.data.delta.content:
-                    if hasattr(block, "text") and block.text:
-                        chunk_count += 1
-                        full_reply += block.text
-                        yield block.text
-    log.info("agent_stream done: user=%r chunks=%d", user_id, chunk_count)
+    else:
+        result = await Runner.run(
+            agent, message,
+            max_turns=30,
+            hooks=_make_hooks(),
+            run_config=RunConfig(
+                input_guardrails=[guardrail],
+                output_guardrails=[out_guardrail],
+                workflow_name="momentum-chat-stream",
+            ),
+        )
+    
+    reply = result.final_output
+    log.info("agent done: user=%r len=%d", user_id, len(reply))
+    
+    # 手动分段输出，模拟流式效果
+    chunk_size = 3
+    for i in range(0, len(reply), chunk_size):
+        yield reply[i:i+chunk_size]
+        await asyncio.sleep(0.01)
 
 
 def build_openai_client(provider: ProviderConfig):
