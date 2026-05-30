@@ -9,7 +9,7 @@
 - **任务全生命周期** — 待办 → 进行中 → 已完成 / 已放弃，一键切换
 - **大任务拆分** — AI 自动将目标拆为 3-5 个可执行子任务
 - **重复任务** — 每天 / 每周 / 每月，完成后自动生成下一期
-- **AI Agent 对话** — 19 个工具的自主 agent：查任务、建任务、给建议、记偏好、识别模式
+- **AI Agent 对话** — 19 个工具的自主 agent：查任务，建任务、给建议、记偏好、识别模式
 - **会话记忆** — SQLiteSession 持久化，重启不丢对话上下文
 - **流式输出** — 打字机效果，边想边说
 - **用户认证** — 注册 / 登录 / 会话管理，PBKDF2 密码哈希
@@ -23,11 +23,13 @@
 - **按标签筛选** — 查询某个标签下的所有任务
 - **批量打标签** — 一次给多个任务加标签
 
-### 任务关系
+### 任务关系与层级
 - **5 种关系类型** — `depends_on`（依赖）、`blocks`（阻塞）、`relates_to`（关联）、`parent_of`（父子）、`follows`（顺序）
 - **依赖检查** — 查询任务是否被阻塞、依赖链是否完整
 - **子任务** — 创建子任务、批量创建子任务、查看子任务树
 - **关系图** — 查询任务的所有关系、前序/后序任务
+- **主任务与子任务区分** — 主任务可添加子任务，视觉上明显区分
+- **自动完成** — 主任务完成时自动完成所有子任务
 
 ### 心跳提醒
 - **主动建议** — 根据时间段、任务优先级、用户精力自动推荐下一步
@@ -41,7 +43,19 @@
 
 ### AI 视觉
 - **图片识别** — 上传图片（image_base64），AI 视觉模型分析内容
-- **Vision 模型** — 支持 OpenAI-compatible 视觉模型（如 GPT-4o）
+- **Vision 模型** — 支持 OpenAI-compatible 视觉模型（如 GPT-4o、Claude-3 系列、Gemini 等）
+- **手动启用** — 用户可在配置页面手动开启视觉功能，不依赖自动检测
+- **配置灵活** — 支持自定义 API Key、基础地址和模型名称
+
+### 智能建议与复盘
+- **今日建议** — 根据任务优先级、截止时间智能推荐下一步
+- **每日复盘** — 分析已完成任务，给出改进建议
+- **AI 增强** — 配置 API Key 后由 AI Agent 提供更智能的建议和复盘
+
+### 任务操作
+- **编辑任务** — 修改标题、截止时间、优先级、预估时间、标签、备注
+- **推迟任务** — Web 界面支持快速选择（1天、3天、1周、1个月）或自定义天数
+- **搜索优化** — 支持搜索标题、备注、标签，不受当前状态限制
 
 ### 服务集成
 - **天气服务** — 查询当前天气，辅助任务建议
@@ -66,7 +80,7 @@ cp .env.example .env
 
 # 4. 启动
 momentum-agent serve
-# 打开 http://127.0.0.1:8765
+# 打开 http://127.0.0.1:8000
 ```
 
 默认账号：`default` / `momentum`（登录后建议修改密码）。
@@ -104,23 +118,26 @@ momentum-agent config show
 momentum-agent chat "帮我安排今天的任务" -v    # -v 显示调用日志
 
 # 服务
-momentum-agent serve --port 8765 -v           # 启动 Web 服务
+momentum-agent serve --port 8000 -v           # 启动 Web 服务
 momentum-agent provider                       # 查看 AI 提供商状态
 ```
 
 ## Web 界面
 
 ```
-http://127.0.0.1:8765
+http://127.0.0.1:8000
 ```
 
 - 登录注册 → 任务工作台
 - 状态标签筛选：待办 | 进行中 | 已完成 | 已放弃
 - **标签筛选** — 按标签过滤任务
-- 搜索框实时过滤
+- 搜索框实时过滤（支持标题、备注、标签）
 - 右侧 Agent 对话面板，流式输出
-- 偏好设置面板
-- **心跳提醒设置** — 配置提醒频率和时段
+- 偏好设置面板（AI配置、工作配置、心跳提醒）
+- **主任务与子任务** — 主任务显示添加子任务按钮，子任务自动缩进显示
+- **推迟任务** — 点击推迟按钮可快速选择 1天/3天/1周/1个月或自定义天数
+- **图片上传** — 支持上传图片提取任务信息（需在配置中启用视觉功能）
+- **响应式设计** — 完美适配桌面端、平板端、手机端
 - 导出 / 导入
 
 ## API
@@ -208,10 +225,10 @@ http://127.0.0.1:8765
 |---|---|
 | AI SDK | OpenAI Agents SDK (OpenAIChatCompletionsModel) |
 | 模型 | DeepSeek V4 Flash / GPT-4.1-mini / 任意 OpenAI-compatible |
-| Vision | OpenAI-compatible 视觉模型（如 GPT-4o） |
+| Vision | OpenAI-compatible 视觉模型（如 GPT-4o、Claude-3 系列、Gemini 等） |
 | 数据库 | SQLite（自动 schema 迁移，支持 tags + task_relations 表） |
 | Web 服务 | Python stdlib `http.server`（零第三方依赖） |
-| 前端 | 原生 JS ES Modules，零构建步骤 |
+| 前端 | 原生 JS ES Modules，零构建步骤，响应式设计 |
 | 认证 | PBKDF2-SHA256 + Session Token |
 | Agent Guardrails | 输入/输出双守卫（防空输入、防超长输出） |
 | 日志 | Python `logging` + `RotatingFileHandler`，默认写文件（`logs/` 目录，10MB 轮转 × 5 备份） |
@@ -253,20 +270,17 @@ src/momentum_agent/
 │   ├── handlers.py     # 请求处理器
 │   └── legacy_server.py # 旧版服务器兼容
 └── static/
-    ├── index.html      # 主界面（含心跳/标签 UI）
+    ├── index.html      # 主界面（任务管理、Web界面）
     ├── login.html      # 登录注册
-    ├── app.css         # 样式
-    ├── app.js          # 旧版（保留）
+    ├── app.css         # 样式（响应式设计，适配多端）
     └── js/             # ES Modules
         ├── api.js
         ├── app.js
-        ├── tasks.js    # 任务列表（标签显示/编辑）
-        ├── chat.js
-        ├── advice.js
-        ├── config.js   # 配置（含心跳设置）
-        ├── heartbeat.js    # 心跳提醒前端
-        ├── vision-demo.js  # 视觉演示
-        └── vision-guide.js # 视觉引导
+        ├── tasks.js     # 任务列表（子任务、标签显示/编辑）
+        ├── chat.js      # Agent 对话
+        ├── advice.js    # 建议与复盘
+        ├── config.js    # 配置（视觉功能、工作配置、心跳设置）
+        └── heartbeat.js # 心跳提醒前端
 tests/
 ├── test_parser.py
 ├── test_config.py
@@ -282,7 +296,7 @@ A: DeepSeek 不支持 structured output (json_schema)。AI 解析/规划失败�
 A: 注册不同账号。数据完全隔离。或者设环境变量 `MOMENTUM_USER=alice` 切换隐式用户。
 
 **Q: 不配 API key 能用吗？**
-A: 能。任务 CRUD、模板规划、规则建议全都可以离线工作。只有 Agent 对话需要 API key。
+A: 能。任务 CRUD、模板规划、规则建议全都可以离线工作。只有 Agent 对话、今日建议和复盘的 AI 增强需要 API key。
 
 **Q: 标签怎么用？**
 A: CLI 用 `--tags` 参数，Web 界面在任务编辑框输入标签。API 用 `/api/tags` 系列端点。
@@ -292,6 +306,15 @@ A: 系统根据时间、任务优先级、用户精力状态自动推荐下一�
 
 **Q: 任务关系有什么用？**
 A: 设置任务间依赖（"B 依赖 A 完成"），系统会自动检查阻塞状态，防止开始被阻塞的任务。
+
+**Q: 主任务和子任务有什么区别？**
+A: 主任务可以添加子任务，视觉上主任务有更明显的边框和背景色，子任务会缩进显示。当主任务完成时，所有子任务会自动标记为完成。
+
+**Q: 视觉功能如何使用？**
+A: 在配置页面中勾选"启用视觉功能"并保存。上传图片后，AI 会自动分析图片内容并提取任务信息（仅支持配置的视觉模型）。
+
+**Q: 推迟任务支持哪些选项？**
+A: Web 界面支持快速选择：1天、3天、1周、1个月，也可以手动输入自定义天数（1-365天）。CLI 使用 `--days` 参数指定天数。
 
 **Q: 日志文件在哪？**
 A: 默认写入项目根目录下 `logs/momentum-YYYY-MM-DD.log`，自动按日期命名、10MB 轮转、保留 5 个备份。设 `MOMENTUM_LOG_FILE=off` 可关闭文件日志。
