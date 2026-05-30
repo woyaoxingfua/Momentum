@@ -110,7 +110,7 @@ function onSearchInput() {
     if (!q) { await loadTasks(); return; }
     const payload = await requestJson(`/api/tasks?q=${encodeURIComponent(q)}`);
     const { renderTasks } = await import("./tasks.js");
-    renderTasks(payload.tasks);
+    renderTasks(payload.tasks, true);
   }, 200);
 }
 

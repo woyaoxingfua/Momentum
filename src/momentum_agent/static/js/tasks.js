@@ -19,11 +19,15 @@ export function getTaskStatusFilter() {
 
 const STATUS_LABELS = { todo: "待办", doing: "进行中", done: "已完成", dropped: "已放弃" };
 
-export function renderTasks(tasks) {
-  const label = STATUS_LABELS[currentStatus] || "待办";
-  els.taskCount.textContent = `${tasks.length} 个${label}`;
+export function renderTasks(tasks, isSearchResult = false) {
+  if (isSearchResult) {
+    els.taskCount.textContent = `${tasks.length} 个搜索结果`;
+  } else {
+    const label = STATUS_LABELS[currentStatus] || "待办";
+    els.taskCount.textContent = `${tasks.length} 个${label}`;
+  }
   if (tasks.length === 0) {
-    els.tasks.innerHTML = `<div class="empty">没有${label}任务。</div>`;
+    els.tasks.innerHTML = `<div class="empty">${isSearchResult ? "没有找到匹配的任务。" : `没有${STATUS_LABELS[currentStatus] || "待办"}任务。`}</div>`;
     return;
   }
 

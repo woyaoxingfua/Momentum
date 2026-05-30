@@ -850,18 +850,12 @@ class TaskStore:
         log.info("search_tasks q=%r user=%r", query, user_id)
         like = f"%{query}%"
         with self._connect() as conn:
-            if status:
-                rows = conn.execute(
-                    "SELECT * FROM tasks WHERE user_id = ? AND title LIKE ? AND status = ? "
-                    "ORDER BY due_at IS NULL, due_at, id",
-                    (user_id, like, status.value),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM tasks WHERE user_id = ? AND title LIKE ? "
-                    "ORDER BY due_at IS NULL, due_at, id",
-                    (user_id, like),
-                ).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE user_id = ? "
+                "AND (title LIKE ? OR notes LIKE ? OR tags LIKE ?) "
+                "ORDER BY due_at IS NULL, due_at, id",
+                (user_id, like, like, like),
+            ).fetchall()
         return [row_to_task(row) for row in rows]
 
     # ── export / import ──────────────────────────────────────────────
