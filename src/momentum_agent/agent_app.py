@@ -560,7 +560,7 @@ _sessions: dict[str, object] = {}
 
 
 SESSION_LIMIT: int | None = None
-SESSION_VERSION = "v5"  # 恢复 SQLiteSession，但更安全的历史验证
+SESSION_VERSION = "v6"  # 完全禁用持久化历史，仅内存中临时保存，但使用 notes 工具保存记忆
 
 
 def _extract_text(content: object) -> str:
@@ -699,47 +699,36 @@ def _cleanup_session_db(db_path: Path, session_id: str) -> None:
 
 def _get_session(db_path: Path, user_id: str):
     """
-    使用 SQLiteSession 持久化对话历史，但仅保留纯文本消息，
-    过滤掉所有 tool_calls 和 tool 响应，避免格式错误。
+    完全禁用对话历史持久化，每次都是全新会话！
+    但 Agent 可以用 save_note/get_my_notes 工具记住你的偏好。
     """
-    from agents import SQLiteSession
-
-    key = str(db_path.resolve())
-    if key not in _sessions:
-        _sessions[key] = {}
-    sessions_for_db = _sessions[key]
+    from agents import Session
+    from agents import SessionSettings
     
-    if user_id not in sessions_for_db:
-        session_id = f"{user_id}-{SESSION_VERSION}"
-        session_path = db_path.parent / f".momentum_sessions_{user_id}_{SESSION_VERSION}.db"
-        from agents import SessionSettings
-        _cleanup_session_db(session_path, session_id)
-        base_session = SQLiteSession(
-            session_id=session_id,
-            db_path=str(session_path),
-            session_settings=SessionSettings(limit=SESSION_LIMIT),
-        )
+    # 每次都返回一个全新的内存会话
+    base_session = Session(
+        session_id=f"{user_id}-{SESSION_VERSION}-{int(datetime.now().timestamp())}",
+        session_settings=SessionSettings(limit=SESSION_LIMIT),
+    )
+    
+    class _NoHistorySession:
+        session_id = base_session.session_id
+        session_settings = base_session.session_settings
         
-        class _SafeSession:
-            session_id = base_session.session_id
-            session_settings = base_session.session_settings
-
-            async def get_items(self, limit: int | None = None):
-                items = await base_session.get_items(limit)
-                return _sanitize_items(items)
-
-            async def add_items(self, items):
-                await base_session.add_items(_sanitize_items(list(items)))
-
-            async def pop_item(self):
-                return await base_session.pop_item()
-
-            async def clear_session(self):
-                return await base_session.clear_session()
-
-        sessions_for_db[user_id] = _SafeSession()
+        async def get_items(self, limit: int | None = None):
+            items = await base_session.get_items(limit)
+            return _sanitize_items(items)
+        
+        async def add_items(self, items):
+            await base_session.add_items(_sanitize_items(list(items)))
+        
+        async def pop_item(self):
+            return await base_session.pop_item()
+        
+        async def clear_session(self):
+            return await base_session.clear_session()
     
-    return sessions_for_db[user_id]
+    return _NoHistorySession()
 
 
 def _make_hooks():
