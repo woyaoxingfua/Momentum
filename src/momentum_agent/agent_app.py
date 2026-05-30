@@ -1013,17 +1013,23 @@ def build_model_settings(provider: ProviderConfig):
     return ModelSettings(extra_body=extra_body or None)
 
 
-def provider_status() -> str:
+def provider_status() -> dict:
     provider = load_provider_config()
     if not provider.is_configured:
-        return "Agent provider: local fallback（未配置 API key）"
+        return {
+            "provider": "Agent provider: local fallback（未配置 API key）",
+            "configured": False,
+        }
 
     tracing = "disabled" if provider.disable_tracing else "enabled"
     thinking = f" | thinking: {provider.thinking}" if provider.thinking else ""
     effort = f" | reasoning_effort: {provider.reasoning_effort}" if provider.reasoning_effort else ""
     features = " | features: unified agent + session memory + streaming + guardrails"
     user = f" | user: {get_current_user()}"
-    return f"Agent provider: {provider.provider_label} | model: {provider.model}{thinking}{effort}{features}{user} | tracing: {tracing}"
+    return {
+        "provider": f"Agent provider: {provider.provider_label} | model: {provider.model}{thinking}{effort}{features}{user} | tracing: {tracing}",
+        "configured": True,
+    }
 
 
 def should_plan(message: str) -> bool:

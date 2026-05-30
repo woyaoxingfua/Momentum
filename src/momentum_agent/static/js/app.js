@@ -4,7 +4,7 @@ if (!localStorage.getItem("momentum_token")) {
   window.location.href = "/login.html";
 }
 import { initTasks, saveEdit, loadTasks, setTaskStatusFilter } from "./tasks.js";
-import { initChat, setAfterChat, sendChat } from "./chat.js";
+import { initChat, setAfterChat, sendChat, sendToAgent } from "./chat.js";
 import { initAdvice, loadAdvice, loadReview } from "./advice.js";
 import { initConfig, loadConfig, saveConfig } from "./config.js";
 import { initHeartbeat, loadHeartbeatConfig, startHeartbeatChecks } from "./heartbeat.js";
@@ -53,6 +53,7 @@ const els = {
 async function loadProvider() {
   const payload = await requestJson("/api/provider");
   els.providerStatus.textContent = payload.provider;
+  isProviderConfigured = payload.configured === true;
 }
 
 // ── refresh ─────────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ async function refreshAll() {
 // ── search ──────────────────────────────────────────────────────────
 
 let searchTimer = null;
+let isProviderConfigured = false;
 
 function onSearchInput() {
   clearTimeout(searchTimer);
@@ -122,13 +124,36 @@ async function addTask() {
 async function planTask() {
   const text = els.taskInput.value.trim();
   if (!text) return;
-  els.planTaskButton.disabled = true;
-  try {
-    await requestJson("/api/plan", { method: "POST", body: JSON.stringify({ text }) });
-    els.taskInput.value = "";
-    await refreshAll();
-  } finally {
-    els.planTaskButton.disabled = false;
+  
+  if (isProviderConfigured) {
+    els.planTaskButton.disabled = true;
+    try {
+      const message = `请帮我将以下任务拆分成 3-5 个具体、可执行的子任务，并创建到我的任务列表中。
+
+任务：${text}
+
+拆解原则：
+1. 每个子任务控制在 10-60 分钟内可完成
+2. 子任务之间要有先后逻辑：先收集信息，再动手做，最后检查
+3. 子任务标题要具体，包含动作动词（梳理/写出/查找/对比/整理/提交/发送/确认）
+4. 总时间不要超过父任务的合理范围（通常 60-180 分钟）
+
+请帮我创建这些任务。`;
+      await sendToAgent(message);
+      els.taskInput.value = "";
+      await refreshAll();
+    } finally {
+      els.planTaskButton.disabled = false;
+    }
+  } else {
+    els.planTaskButton.disabled = true;
+    try {
+      await requestJson("/api/plan", { method: "POST", body: JSON.stringify({ text }) });
+      els.taskInput.value = "";
+      await refreshAll();
+    } finally {
+      els.planTaskButton.disabled = false;
+    }
   }
 }
 
@@ -150,8 +175,22 @@ initConfig(
 
 els.addTaskButton.addEventListener("click", addTask);
 els.planTaskButton.addEventListener("click", planTask);
-els.adviseButton.addEventListener("click", loadAdvice);
-els.reviewButton.addEventListener("click", loadReview);
+els.adviseButton.addEventListener("click", async () => {
+  if (isProviderConfigured) {
+    const tasks = await loadTasks();
+    await loadAdviceWithAI(tasks);
+  } else {
+    await loadAdvice();
+  }
+});
+els.reviewButton.addEventListener("click", async () => {
+  if (isProviderConfigured) {
+    const tasks = await loadTasks();
+    await loadReviewWithAI(tasks);
+  } else {
+    await loadReview();
+  }
+});
 els.refreshButton.addEventListener("click", refreshAll);
 els.chatForm.addEventListener("submit", sendChat);
 els.taskInput.addEventListener("keydown", (event) => {

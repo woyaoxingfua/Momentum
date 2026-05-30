@@ -133,3 +133,67 @@ export async function sendChat(event) {
 
   if (onAfterChat) await onAfterChat();
 }
+
+export async function sendToAgent(message) {
+  addMessage("user", message);
+
+  const agentItem = addMessage("agent", "…");
+
+  try {
+    const token = localStorage.getItem("momentum_token");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const response = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ message }),
+    });
+
+    if (response.status === 401) {
+      localStorage.removeItem("momentum_token");
+      window.location.href = "/login.html";
+      return;
+    }
+
+    if (!response.ok) {
+      const err = await response.json();
+      agentItem.textContent = err.error || "请求失败";
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullText = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const parsed = JSON.parse(line.slice(6));
+            if (parsed.error) {
+              fullText = parsed.error;
+            } else if (parsed.chunk) {
+              fullText += parsed.chunk;
+            }
+            agentItem.textContent = fullText || "…";
+            chatLog.scrollTop = chatLog.scrollHeight;
+          } catch {
+            // skip malformed lines
+          }
+        }
+      }
+    }
+  } catch (err) {
+    agentItem.textContent = `连接失败：${err.message}`;
+  }
+
+  if (onAfterChat) await onAfterChat();
+}

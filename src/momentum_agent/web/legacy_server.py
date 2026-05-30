@@ -124,7 +124,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/review":
                 self.send_json({"review": local_review(TaskStore(self.db_path), user_id=user_id)})
             elif parsed.path == "/api/provider":
-                self.send_json({"provider": provider_status()})
+                self.send_json(provider_status())
             elif parsed.path == "/api/config":
                 self.send_json({"config": get_user_config_cmd(TaskStore(self.db_path), user_id=user_id)})
             elif parsed.path == "/api/me":
