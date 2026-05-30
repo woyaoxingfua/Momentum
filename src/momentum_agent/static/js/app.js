@@ -3,7 +3,7 @@ import { requestJson, logout } from "./api.js";
 if (!localStorage.getItem("momentum_token")) {
   window.location.href = "/login.html";
 }
-import { initTasks, saveEdit, saveSubtask, loadTasks, setTaskStatusFilter } from "./tasks.js";
+import { initTasks, saveEdit, saveSubtask, savePostpone, bindPostponeOptions, loadTasks, setTaskStatusFilter } from "./tasks.js";
 import { initChat, setAfterChat, sendChat, sendToAgent } from "./chat.js";
 import { initAdvice, loadAdvice, loadReview } from "./advice.js";
 import { initConfig, loadConfig, saveConfig } from "./config.js";
@@ -45,6 +45,10 @@ const els = {
   addSubtaskPriority: document.querySelector("#addSubtaskPriority"),
   addSubtaskEstimate: document.querySelector("#addSubtaskEstimate"),
   addSubtaskCancelButton: document.querySelector("#addSubtaskCancelButton"),
+  postponeDialog: document.querySelector("#postponeDialog"),
+  postponeTaskId: document.querySelector("#postponeTaskId"),
+  postponeDays: document.querySelector("#postponeDays"),
+  postponeCancelButton: document.querySelector("#postponeCancelButton"),
   configApiKey: document.querySelector("#configApiKey"),
   configApiBase: document.querySelector("#configApiBase"),
   configModel: document.querySelector("#configModel"),
@@ -308,6 +312,9 @@ els.editDialog.querySelector("form").addEventListener("submit", saveEdit);
 els.editCancelButton.addEventListener("click", () => els.editDialog.close());
 els.addSubtaskDialog.querySelector("form").addEventListener("submit", saveSubtask);
 els.addSubtaskCancelButton.addEventListener("click", () => els.addSubtaskDialog.close());
+els.postponeDialog.querySelector("form").addEventListener("submit", savePostpone);
+els.postponeCancelButton.addEventListener("click", () => els.postponeDialog.close());
+bindPostponeOptions();
 els.configSaveButton.addEventListener("click", saveConfig);
 els.searchInput.addEventListener("input", onSearchInput);
 els.exportButton.addEventListener("click", exportData);

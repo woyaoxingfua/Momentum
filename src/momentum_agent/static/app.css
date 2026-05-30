@@ -731,3 +731,32 @@ dialog::backdrop {
     grid-template-columns: 1fr;
   }
 }
+
+.postpone-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.postpone-option {
+  padding: 10px 6px;
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+  min-height: auto;
+}
+
+.postpone-option:hover {
+  background: var(--surface-strong);
+  border-color: var(--accent);
+}
+
+.postpone-option:active {
+  background: #d9e5d3;
+  transform: scale(0.98);
+}

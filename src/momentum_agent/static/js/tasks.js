@@ -116,12 +116,7 @@ function bindTaskButtons() {
   });
 
   document.querySelectorAll("[data-postpone]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      await requestJson(`/api/tasks/${btn.dataset.postpone}/postpone`, {
-        method: "POST", body: JSON.stringify({ days: 3 }),
-      });
-      await loadTasks();
-    });
+    btn.addEventListener("click", () => openPostponeDialog(btn.dataset.postpone));
   });
 
   document.querySelectorAll("[data-drop]").forEach((btn) => {
@@ -235,4 +230,36 @@ function orderTasks(tasks) {
     .forEach((t) => ordered.push(t));
 
   return ordered;
+}
+
+function openPostponeDialog(taskId) {
+  appEls.postponeTaskId.value = taskId;
+  appEls.postponeDays.value = 3;
+  appEls.postponeDialog.showModal();
+}
+
+export async function savePostpone(event) {
+  event.preventDefault();
+  
+  const taskId = appEls.postponeTaskId.value;
+  const days = Number(appEls.postponeDays.value);
+  
+  if (!days || days < 1) {
+    alert("请输入有效的推迟天数");
+    return;
+  }
+  
+  await requestJson(`/api/tasks/${taskId}/postpone`, {
+    method: "POST", body: JSON.stringify({ days: days }),
+  });
+  appEls.postponeDialog.close();
+  await loadTasks();
+}
+
+export function bindPostponeOptions() {
+  document.querySelectorAll(".postpone-option").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      appEls.postponeDays.value = btn.dataset.days;
+    });
+  });
 }
