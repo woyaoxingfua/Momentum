@@ -35,16 +35,34 @@ class ProviderConfig:
         return self.base_url or "OpenAI default endpoint"
 
 
-def load_provider_config() -> ProviderConfig:
+def load_provider_config(user_config: dict[str, str] | None = None) -> ProviderConfig:
     load_dotenv()
     disable_tracing = parse_optional_bool(first_env("MOMENTUM_DISABLE_TRACING"))
     if disable_tracing is None:
         disable_tracing = bool(first_env("MOMENTUM_BASE_URL", "OPENAI_BASE_URL"))
 
+    # 优先从用户配置读取，其次从环境变量读取
+    api_key = None
+    base_url = None
+    model = None
+    
+    if user_config:
+        api_key = user_config.get("api_key")
+        base_url = user_config.get("api_base")
+        model = user_config.get("model")
+    
+    # 如果用户配置没有，则从环境变量读取
+    if not api_key:
+        api_key = first_env("MOMENTUM_API_KEY", "OPENAI_API_KEY")
+    if not base_url:
+        base_url = first_env("MOMENTUM_BASE_URL", "OPENAI_BASE_URL")
+    if not model:
+        model = first_env("MOMENTUM_MODEL", "OPENAI_MODEL") or DEFAULT_MODEL
+
     config = ProviderConfig(
-        api_key=first_env("MOMENTUM_API_KEY", "OPENAI_API_KEY"),
-        base_url=first_env("MOMENTUM_BASE_URL", "OPENAI_BASE_URL"),
-        model=first_env("MOMENTUM_MODEL", "OPENAI_MODEL") or DEFAULT_MODEL,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
         disable_tracing=disable_tracing,
         thinking=normalize_thinking(first_env("MOMENTUM_THINKING", "OPENAI_THINKING")),
         reasoning_effort=normalize_reasoning_effort(

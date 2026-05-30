@@ -16,9 +16,12 @@ export async function loadConfig() {
     lines.forEach((line) => {
       const [key, ...rest] = line.replace("  ", "").split("=");
       const value = rest.join("=").trim();
-      if (key.trim() === "daily_capacity_minutes") elements.configCapacity.value = value;
-      if (key.trim() === "working_hours_start") elements.configWorkStart.value = value;
-      if (key.trim() === "working_hours_end") elements.configWorkEnd.value = value;
+      if (key.trim() === "api_key" && elements.configApiKey) elements.configApiKey.value = value;
+      if (key.trim() === "api_base" && elements.configApiBase) elements.configApiBase.value = value;
+      if (key.trim() === "model" && elements.configModel) elements.configModel.value = value;
+      if (key.trim() === "daily_capacity_minutes" && elements.configCapacity) elements.configCapacity.value = value;
+      if (key.trim() === "working_hours_start" && elements.configWorkStart) elements.configWorkStart.value = value;
+      if (key.trim() === "working_hours_end" && elements.configWorkEnd) elements.configWorkEnd.value = value;
     });
   }
 }
@@ -33,9 +36,12 @@ export async function saveConfig() {
     saveButton.disabled = true;
     
     const entries = [
-      ["daily_capacity_minutes", elements.configCapacity.value || "45"],
-      ["working_hours_start", elements.configWorkStart.value || "09:00"],
-      ["working_hours_end", elements.configWorkEnd.value || "18:00"],
+      ["api_key", elements.configApiKey?.value || ""],
+      ["api_base", elements.configApiBase?.value || ""],
+      ["model", elements.configModel?.value || "gpt-4o"],
+      ["daily_capacity_minutes", elements.configCapacity?.value || "45"],
+      ["working_hours_start", elements.configWorkStart?.value || "09:00"],
+      ["working_hours_end", elements.configWorkEnd?.value || "18:00"],
     ];
     for (const [key, value] of entries) {
       await requestJson("/api/config", {
@@ -50,6 +56,10 @@ export async function saveConfig() {
 
     const { loadAdvice } = await import("./advice.js");
     await loadAdvice();
+    
+    // 重新加载 provider 状态
+    const { loadProvider } = await import("./app.js");
+    await loadProvider();
     
     // 显示成功提示
     saveButton.textContent = "✓ 已保存";

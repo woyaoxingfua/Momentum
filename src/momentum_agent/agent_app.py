@@ -35,7 +35,8 @@ def _parsed_to_message(parsed: ParsedTask, store: TaskStore, *, user_id: str = D
 
 def create_task_from_text(store: TaskStore, text: str, *, user_id: str = DEFAULT_USER_ID) -> str:
     log.info("create_task_from_text user=%r text=%r", user_id, text)
-    provider = load_provider_config()
+    user_config = store.get_all_memory(user_id=user_id)
+    provider = load_provider_config(user_config)
     if provider.is_configured:
         try:
             parsed = asyncio.run(_parse_task_with_ai(text, provider))
@@ -49,7 +50,8 @@ def create_task_from_text(store: TaskStore, text: str, *, user_id: str = DEFAULT
 
 def create_plan_from_text(store: TaskStore, text: str, *, user_id: str = DEFAULT_USER_ID) -> str:
     log.info("create_plan_from_text user=%r text=%r", user_id, text)
-    provider = load_provider_config()
+    user_config = store.get_all_memory(user_id=user_id)
+    provider = load_provider_config(user_config)
     if provider.is_configured:
         try:
             return asyncio.run(_plan_task_with_ai(text, provider, store, user_id=user_id))
@@ -825,10 +827,11 @@ async def run_agent_message(
     and the agent will analyze it and extract tasks from the image.
     """
     log.info("agent_message user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
-    provider = load_provider_config()
+    store = TaskStore(db_path)
+    user_config = store.get_all_memory(user_id=user_id)
+    provider = load_provider_config(user_config)
 
     if not provider.is_configured:
-        store = TaskStore(db_path)
         if image_base64:
             return "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
         if should_review(message):
@@ -840,10 +843,7 @@ async def run_agent_message(
     try:
         from agents import Runner, RunConfig, set_default_openai_client
     except ImportError:
-        store = TaskStore(db_path)
         return create_task_from_text(store, message, user_id=user_id)
-
-    store = TaskStore(db_path)
     openai_client = build_openai_client(provider)
     set_default_openai_client(openai_client, use_for_tracing=not provider.disable_tracing)
 
@@ -900,10 +900,11 @@ async def run_agent_message_stream(
     and yields the result line by line.
     """
     log.info("agent_stream user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
-    provider = load_provider_config()
+    store = TaskStore(db_path)
+    user_config = store.get_all_memory(user_id=user_id)
+    provider = load_provider_config(user_config)
 
     if not provider.is_configured:
-        store = TaskStore(db_path)
         if image_base64:
             yield "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
             return
@@ -918,11 +919,8 @@ async def run_agent_message_stream(
     try:
         from agents import Runner, RunConfig, set_default_openai_client
     except ImportError:
-        store = TaskStore(db_path)
         yield create_task_from_text(store, message, user_id=user_id)
         return
-
-    store = TaskStore(db_path)
     openai_client = build_openai_client(provider)
     set_default_openai_client(openai_client, use_for_tracing=not provider.disable_tracing)
 
@@ -1013,8 +1011,8 @@ def build_model_settings(provider: ProviderConfig):
     return ModelSettings(extra_body=extra_body or None)
 
 
-def provider_status() -> dict:
-    provider = load_provider_config()
+def provider_status(user_config: dict[str, str] | None = None) -> dict:
+    provider = load_provider_config(user_config)
     if not provider.is_configured:
         return {
             "provider": "Agent provider: local fallback（未配置 API key）",

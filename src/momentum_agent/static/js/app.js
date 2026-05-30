@@ -38,6 +38,9 @@ const els = {
   editTags: document.querySelector("#editTags"),
   editNotes: document.querySelector("#editNotes"),
   editCancelButton: document.querySelector("#editCancelButton"),
+  configApiKey: document.querySelector("#configApiKey"),
+  configApiBase: document.querySelector("#configApiBase"),
+  configModel: document.querySelector("#configModel"),
   configCapacity: document.querySelector("#configCapacity"),
   configWorkStart: document.querySelector("#configWorkStart"),
   configWorkEnd: document.querySelector("#configWorkEnd"),
@@ -169,7 +172,14 @@ initChat(els.chatLog, els.chatInput);
 setAfterChat(refreshAll);
 initAdvice(els.adviceText);
 initConfig(
-  { configCapacity: els.configCapacity, configWorkStart: els.configWorkStart, configWorkEnd: els.configWorkEnd },
+  { 
+    configApiKey: els.configApiKey, 
+    configApiBase: els.configApiBase,
+    configModel: els.configModel,
+    configCapacity: els.configCapacity, 
+    configWorkStart: els.configWorkStart, 
+    configWorkEnd: els.configWorkEnd 
+  },
   els.adviceText,
 );
 

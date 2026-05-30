@@ -18,13 +18,18 @@ export async function requestJson(url, options = {}) {
   return payload;
 }
 
-export function logout() {
-  const token = localStorage.getItem("momentum_token");
-  if (token) {
-    fetch("/api/logout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-    });
+export async function logout() {
+  try {
+    const token = localStorage.getItem("momentum_token");
+    if (token) {
+      await fetch("/api/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      });
+    }
+  } catch (error) {
+    // 即使 logout API 失败也继续登出流程
+    console.log("登出请求失败，但继续登出流程");
   }
   localStorage.removeItem("momentum_token");
   localStorage.removeItem("momentum_user");

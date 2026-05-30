@@ -124,7 +124,10 @@ class MomentumHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/review":
                 self.send_json({"review": local_review(TaskStore(self.db_path), user_id=user_id)})
             elif parsed.path == "/api/provider":
-                self.send_json(provider_status())
+                # 从用户配置中读取 API key 等设置
+                store = TaskStore(self.db_path)
+                user_config = store.get_all_memory(user_id=user_id)
+                self.send_json(provider_status(user_config))
             elif parsed.path == "/api/config":
                 self.send_json({"config": get_user_config_cmd(TaskStore(self.db_path), user_id=user_id)})
             elif parsed.path == "/api/me":
