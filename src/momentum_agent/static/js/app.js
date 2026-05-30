@@ -3,7 +3,7 @@ import { requestJson, logout } from "./api.js";
 if (!localStorage.getItem("momentum_token")) {
   window.location.href = "/login.html";
 }
-import { initTasks, saveEdit, loadTasks, setTaskStatusFilter } from "./tasks.js";
+import { initTasks, saveEdit, saveSubtask, loadTasks, setTaskStatusFilter } from "./tasks.js";
 import { initChat, setAfterChat, sendChat, sendToAgent } from "./chat.js";
 import { initAdvice, loadAdvice, loadReview } from "./advice.js";
 import { initConfig, loadConfig, saveConfig } from "./config.js";
@@ -38,6 +38,13 @@ const els = {
   editTags: document.querySelector("#editTags"),
   editNotes: document.querySelector("#editNotes"),
   editCancelButton: document.querySelector("#editCancelButton"),
+  addSubtaskDialog: document.querySelector("#addSubtaskDialog"),
+  addSubtaskParentId: document.querySelector("#addSubtaskParentId"),
+  addSubtaskTitle: document.querySelector("#addSubtaskTitle"),
+  addSubtaskDue: document.querySelector("#addSubtaskDue"),
+  addSubtaskPriority: document.querySelector("#addSubtaskPriority"),
+  addSubtaskEstimate: document.querySelector("#addSubtaskEstimate"),
+  addSubtaskCancelButton: document.querySelector("#addSubtaskCancelButton"),
   configApiKey: document.querySelector("#configApiKey"),
   configApiBase: document.querySelector("#configApiBase"),
   configModel: document.querySelector("#configModel"),
@@ -255,6 +262,7 @@ initTasks(
     editTags: els.editTags,
     editNotes: els.editNotes 
   },
+  els
 );
 initChat(els.chatLog, els.chatInput);
 setAfterChat(refreshAll);
@@ -298,6 +306,8 @@ els.taskInput.addEventListener("keydown", (event) => {
 });
 els.editDialog.querySelector("form").addEventListener("submit", saveEdit);
 els.editCancelButton.addEventListener("click", () => els.editDialog.close());
+els.addSubtaskDialog.querySelector("form").addEventListener("submit", saveSubtask);
+els.addSubtaskCancelButton.addEventListener("click", () => els.addSubtaskDialog.close());
 els.configSaveButton.addEventListener("click", saveConfig);
 els.searchInput.addEventListener("input", onSearchInput);
 els.exportButton.addEventListener("click", exportData);

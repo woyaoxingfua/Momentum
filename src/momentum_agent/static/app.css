@@ -503,10 +503,19 @@ input:focus {
   background: #fbfcf9;
 }
 
+.task.parent-task {
+  border: 2px solid var(--line);
+  background: #f8faf5;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
 .task.subtask {
-  margin-left: 22px;
+  margin-left: 28px;
   background: #ffffff;
   border-left: 4px solid var(--accent);
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .task-title {

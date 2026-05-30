@@ -730,12 +730,17 @@ class MomentumHandler(BaseHTTPRequestHandler):
         parsed = parse_task_text(f"{due_at_str or ''} {title}")
         chosen_priority = priority if priority_str in Priority._value2member_map_ else parsed.priority
         
+        # 如果用户提供了 estimated_minutes，则使用用户的值，否则使用解析结果
+        estimated_minutes = payload.get("estimated_minutes")
+        if estimated_minutes is None:
+            estimated_minutes = parsed.estimated_minutes
+        
         task = TaskStore(self.db_path).create_subtask(
             task_id,
             title,
             due_at=parsed.due_at,
             priority=chosen_priority,
-            estimated_minutes=parsed.estimated_minutes,
+            estimated_minutes=estimated_minutes,
             notes=payload.get("notes"),
             tags=payload.get("tags"),
             user_id=user_id,

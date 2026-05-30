@@ -2,9 +2,11 @@ import { requestJson, escapeHtml, formatDue, priorityText, recurrenceText, toDat
 
 const els = {};
 let currentStatus = "todo";
+let appEls = null;
 
-export function initTasks(elements, dialogElements) {
+export function initTasks(elements, dialogElements, appElements) {
   Object.assign(els, elements, dialogElements);
+  appEls = appElements;
 }
 
 export function setTaskStatusFilter(status) {
@@ -43,7 +45,7 @@ function renderTaskCard(task) {
     : "";
 
   return `
-    <article class="task ${task.parent_task_id ? "subtask" : ""} ${task.status !== "todo" ? `task-${task.status}` : ""}">
+    <article class="task ${task.parent_task_id ? "subtask" : "parent-task"} ${task.status !== "todo" ? `task-${task.status}` : ""}">
       <div>
         <div class="task-title">${escapeHtml(task.title)}</div>
         <div class="task-meta">
@@ -51,7 +53,7 @@ function renderTaskCard(task) {
           <span class="badge ${task.priority}">${priorityText(task.priority)}</span>
           <span>${formatDue(task.due_at)}</span>
           <span>${task.estimated_minutes ? `${task.estimated_minutes} 分钟` : "未估时"}</span>
-          ${task.parent_task_id ? `<span>子任务</span>` : ""}
+          ${task.parent_task_id ? `<span class="badge">子任务</span>` : ""}
           ${task.recurrence ? `<span class="badge recurrence">${recurrenceText(task.recurrence)}</span>` : ""}
           ${tagsHtml}
         </div>
@@ -65,6 +67,11 @@ function renderTaskCard(task) {
 function actionButtons(task) {
   const buttons = [];
   buttons.push(`<button data-edit="${task.id}" title="编辑">编辑</button>`);
+
+  // 只有主任务才能添加子任务
+  if (!task.parent_task_id) {
+    buttons.push(`<button data-add-subtask="${task.id}" title="添加子任务">➕ 添加子任务</button>`);
+  }
 
   if (task.status === "todo") {
     buttons.push(`<button data-start="${task.id}" title="开始做">开始</button>`);
@@ -100,6 +107,10 @@ function bindTaskButtons() {
     btn.addEventListener("click", () => openEditDialog(btn.dataset.edit));
   });
 
+  document.querySelectorAll("[data-add-subtask]").forEach((btn) => {
+    btn.addEventListener("click", () => openAddSubtaskDialog(btn.dataset.addSubtask));
+  });
+
   document.querySelectorAll("[data-postpone]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await requestJson(`/api/tasks/${btn.dataset.postpone}/postpone`, {
@@ -123,6 +134,38 @@ function bindTaskButtons() {
       await loadTasks();
     });
   });
+}
+
+function openAddSubtaskDialog(parentTaskId) {
+  appEls.addSubtaskParentId.value = parentTaskId;
+  appEls.addSubtaskTitle.value = "";
+  appEls.addSubtaskDue.value = "";
+  appEls.addSubtaskPriority.value = "medium";
+  appEls.addSubtaskEstimate.value = "";
+  appEls.addSubtaskDialog.showModal();
+}
+
+export async function saveSubtask(event) {
+  event.preventDefault();
+  
+  const parentTaskId = appEls.addSubtaskParentId.value;
+  const title = appEls.addSubtaskTitle.value.trim();
+  
+  if (!title) {
+    alert("请输入子任务标题");
+    return;
+  }
+  
+  const body = {
+    title: title,
+    due_at: appEls.addSubtaskDue.value || null,
+    priority: appEls.addSubtaskPriority.value,
+    estimated_minutes: appEls.addSubtaskEstimate.value ? Number(appEls.addSubtaskEstimate.value) : null,
+  };
+  
+  await requestJson(`/api/tasks/${parentTaskId}/subtasks`, { method: "POST", body: JSON.stringify(body) });
+  appEls.addSubtaskDialog.close();
+  await loadTasks();
 }
 
 async function openEditDialog(taskId) {
