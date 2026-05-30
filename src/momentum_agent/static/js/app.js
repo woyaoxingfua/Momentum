@@ -54,10 +54,34 @@ const els = {
 
 // ── provider ────────────────────────────────────────────────────────
 
-async function loadProvider() {
+export async function loadProvider() {
   const payload = await requestJson("/api/provider");
   els.providerStatus.textContent = payload.provider;
   isProviderConfigured = payload.configured === true;
+}
+
+export async function loadAdviceWithAI(tasks) {
+  const message = `请分析我的任务列表并给出今日建议，重点是：
+1. 找出今天最应该完成的任务（截止时间、优先级）
+2. 检查是否有任务即将过期
+3. 如果时间充裕，推荐一些可以开始的任务
+
+我的任务：${JSON.stringify(tasks)}
+
+请给出 3-5 条具体建议。`;
+  await sendToAgent(message);
+}
+
+export async function loadReviewWithAI(tasks) {
+  const message = `请帮我进行任务复盘，分析：
+1. 今天完成了哪些任务，进展如何
+2. 哪些任务需要调整或重新安排
+3. 有什么需要改进的地方
+
+我的任务：${JSON.stringify(tasks)}
+
+请给出详细的复盘报告。`;
+  await sendToAgent(message);
 }
 
 // ── refresh ─────────────────────────────────────────────────────────
