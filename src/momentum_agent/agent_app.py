@@ -560,7 +560,7 @@ _sessions: dict[str, object] = {}
 
 
 SESSION_LIMIT: int | None = None
-SESSION_VERSION = "v3"  # 修复了对话历史不完整的问题
+SESSION_VERSION = "v4"  # 完全重写了对话历史处理逻辑
 
 
 def _extract_text(content: object) -> str:
@@ -746,40 +746,45 @@ def _cleanup_session_db(db_path: Path, session_id: str) -> None:
 
 
 def _get_session(db_path: Path, user_id: str):
-    from agents import SQLiteSession
+    """
+    返回一个临时的内存 session，不持久化到磁盘。
+    避免因为不完整的 tool_calls 导致的错误。
+    """
+    from agents import Session
 
     key = str(db_path.resolve())
     if key not in _sessions:
         _sessions[key] = {}
     sessions_for_db = _sessions[key]
+    
     if user_id not in sessions_for_db:
-        session_id = f"{user_id}-{SESSION_VERSION}"
-        session_path = db_path.parent / f".momentum_sessions_{user_id}_{SESSION_VERSION}.db"
+        # 使用内存 session，每次重启都清空
         from agents import SessionSettings
-        _cleanup_session_db(session_path, session_id)
-        base_session = SQLiteSession(
-            session_id=session_id,
-            db_path=str(session_path),
+        base_session = Session(
+            session_id=f"{user_id}-{SESSION_VERSION}",
             session_settings=SessionSettings(limit=SESSION_LIMIT),
         )
-        class _SanitizedSession:
+        
+        # 保持相同的接口
+        class _TempSession:
             session_id = base_session.session_id
             session_settings = base_session.session_settings
-
+            
             async def get_items(self, limit: int | None = None):
                 items = await base_session.get_items(limit)
                 return _sanitize_items(items)
-
+            
             async def add_items(self, items):
                 await base_session.add_items(_sanitize_items(list(items)))
-
+            
             async def pop_item(self):
                 return await base_session.pop_item()
-
+            
             async def clear_session(self):
                 return await base_session.clear_session()
-
-        sessions_for_db[user_id] = _SanitizedSession()
+        
+        sessions_for_db[user_id] = _TempSession()
+    
     return sessions_for_db[user_id]
 
 
