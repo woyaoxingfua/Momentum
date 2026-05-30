@@ -560,7 +560,7 @@ _sessions: dict[str, object] = {}
 
 
 SESSION_LIMIT: int | None = None
-SESSION_VERSION = "v2"
+SESSION_VERSION = "v3"  # 修复了对话历史不完整的问题
 
 
 def _extract_text(content: object) -> str:
@@ -593,7 +593,82 @@ def _is_empty_assistant_message(item: object) -> bool:
 
 
 def _sanitize_items(items: list[object]) -> list[object]:
-    return [item for item in items if not _is_empty_assistant_message(item)]
+    """
+    清理对话历史，确保：
+    1. 不出现空的 assistant 消息
+    2. 如果有 assistant 消息带 tool_calls，后面必须有对应的 tool 响应消息
+    3. 如果发现不完整的调用序列，直接截断清除
+    """
+    result: list[object] = []
+    pending_tool_calls: set[str] = set()
+    skip_remaining = False
+    
+    for item in items:
+        if skip_remaining:
+            break
+        
+        # 安全地提取 item 内容
+        is_dict = isinstance(item, dict)
+        role = item.get("role") if is_dict else getattr(item, "role", None)
+        tool_calls = item.get("tool_calls") if is_dict else getattr(item, "tool_calls", None)
+        
+        # 跳过空 assistant 消息
+        if is_dict and _is_empty_assistant_message(item):
+            continue
+        
+        # 处理带 tool_calls 的 assistant 消息
+        if role == "assistant" and tool_calls:
+            # 收集这些 call_ids
+            current_calls: set[str] = set()
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    cid = tc.get("id")
+                else:
+                    cid = getattr(tc, "id", None)
+                if cid:
+                    current_calls.add(cid)
+            
+            if current_calls:
+                pending_tool_calls.update(current_calls)
+                result.append(item)
+                continue
+        
+        # 处理 tool 响应消息
+        if role == "tool":
+            tool_call_id = item.get("tool_call_id") if is_dict else getattr(item, "tool_call_id", None)
+            if tool_call_id:
+                pending_tool_calls.discard(tool_call_id)
+            result.append(item)
+            continue
+        
+        # 正常的消息（user 或 assistant 无调用）
+        # 先检查是否有未完成的 pending calls，有的话要截断，从当前消息重新开始
+        if pending_tool_calls:
+            # 还有未完成的 tool calls，说明之前的对话有问题，直接截断，重新开始
+            log.warning("发现不完整的 tool_calls，清空对话历史重新开始")
+            result = []
+            pending_tool_calls.clear()
+        
+        result.append(item)
+    
+    # 最终检查
+    if pending_tool_calls:
+        # 对话结束时还有未完成的 tool calls，移除最后的 assistant 调用消息
+        final_result: list[object] = []
+        for item in reversed(result):
+            is_dict = isinstance(item, dict)
+            role = item.get("role") if is_dict else getattr(item, "role", None)
+            tool_calls = item.get("tool_calls") if is_dict else getattr(item, "tool_calls", None)
+            
+            if role == "assistant" and tool_calls:
+                # 遇到带调用的 assistant 消息就停止，不添加这条
+                pending_tool_calls.clear()
+                break
+            final_result.append(item)
+        final_result.reverse()
+        result = final_result
+    
+    return result
 
 
 def _cleanup_session_db(db_path: Path, session_id: str) -> None:
@@ -612,44 +687,61 @@ def _cleanup_session_db(db_path: Path, session_id: str) -> None:
         (session_id,),
     )
     rows = cur.fetchall()
-    call_to_ids: dict[str, list[int]] = {}
-    seen_calls: set[str] = set()
-    pending_calls: set[str] = set()
     delete_ids: set[int] = set()
+    pending_tool_calls: set[str] = set()
 
     for msg_id, data in rows:
         try:
             payload = json.loads(data)
         except json.JSONDecodeError:
             continue
+        
         if _is_empty_assistant_message(payload):
             delete_ids.add(msg_id)
             continue
+        
+        # 检查新的格式：role: assistant, tool_calls: [...]
+        role = payload.get("role")
+        if role == "assistant" and payload.get("tool_calls"):
+            for tc in payload.get("tool_calls", []):
+                cid = tc.get("id")
+                if cid:
+                    pending_tool_calls.add(cid)
+            continue
+        
+        # 检查新格式：role: tool
+        if role == "tool":
+            tool_call_id = payload.get("tool_call_id")
+            if tool_call_id and tool_call_id in pending_tool_calls:
+                pending_tool_calls.discard(tool_call_id)
+            continue
+        
+        # 旧格式处理
         item_type = payload.get("type")
         if item_type == "function_call":
             call_id = payload.get("call_id")
-            if not call_id:
+            if call_id:
+                pending_tool_calls.add(call_id)
+            else:
                 delete_ids.add(msg_id)
-                continue
-            seen_calls.add(call_id)
-            pending_calls.add(call_id)
-            call_to_ids.setdefault(call_id, []).append(msg_id)
         elif item_type == "function_call_output":
             call_id = payload.get("call_id")
-            if not call_id or call_id not in seen_calls:
-                delete_ids.add(msg_id)
+            if call_id and call_id in pending_tool_calls:
+                pending_tool_calls.discard(call_id)
             else:
-                pending_calls.discard(call_id)
-
-    for call_id in pending_calls:
-        delete_ids.update(call_to_ids.get(call_id, []))
-
-    if delete_ids:
+                delete_ids.add(msg_id)
+    
+    # 如果还有 pending 的 calls，直接清空整个 session 更安全
+    if pending_tool_calls:
+        log.warning("检测到不完整的对话历史，清空整个 session")
+        cur.execute("DELETE FROM agent_messages WHERE session_id = ?", (session_id,))
+    elif delete_ids:
         cur.executemany(
             "DELETE FROM agent_messages WHERE id = ?",
             [(msg_id,) for msg_id in sorted(delete_ids)],
         )
-        conn.commit()
+    
+    conn.commit()
     conn.close()
 
 
