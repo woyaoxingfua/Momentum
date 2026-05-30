@@ -160,15 +160,15 @@ class MomentumHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/change-password":
                 self.handle_change_password(user_id)
             elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/done"):
-                self.handle_done_task(parsed.path)
+                self.handle_done_task(parsed.path, user_id)
             elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/postpone"):
-                self.handle_postpone_task(parsed.path)
+                self.handle_postpone_task(parsed.path, user_id)
             elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/drop"):
-                self.handle_drop_task(parsed.path)
+                self.handle_drop_task(parsed.path, user_id)
             elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/start"):
-                self.handle_start_task(parsed.path)
+                self.handle_start_task(parsed.path, user_id)
             elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/reopen"):
-                self.handle_reopen_task(parsed.path)
+                self.handle_reopen_task(parsed.path, user_id)
             elif parsed.path == "/api/chat":
                 self.handle_chat(user_id)
             elif parsed.path == "/api/chat/stream":
@@ -252,12 +252,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
         message = create_plan_from_text(store, text, user_id=user_id)
         self.send_json({"message": message, "tasks": [task_to_json(t) for t in store.list_tasks(user_id=user_id)]})
 
-    def handle_done_task(self, path: str) -> None:
+    def handle_done_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "done")
         if task_id is None:
             return
         store = TaskStore(self.db_path)
-        next_task = store.complete_recurring_task(task_id)
+        next_task = store.complete_recurring_task(task_id, user_id=user_id)
         if next_task and next_task.recurrence:
             self.send_json({"message": f"已创建下一期任务 #{next_task.id}：{next_task.title}"})
         elif next_task:
@@ -280,41 +280,52 @@ class MomentumHandler(BaseHTTPRequestHandler):
         )
         self.send_json({"message": message})
 
-    def handle_postpone_task(self, path: str) -> None:
+    def handle_postpone_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "postpone")
         if task_id is None:
             return
         payload = self.read_json()
         days = int(payload.get("days", 3))
-        self.send_json({"message": postpone_task_cmd(TaskStore(self.db_path), task_id, days)})
+        self.send_json({"message": postpone_task_cmd(TaskStore(self.db_path), task_id, days, user_id=user_id)})
 
-    def handle_drop_task(self, path: str) -> None:
+    def handle_drop_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "drop")
         if task_id is None:
             return
-        self.send_json({"message": drop_task_cmd(TaskStore(self.db_path), task_id)})
+        self.send_json({"message": drop_task_cmd(TaskStore(self.db_path), task_id, user_id=user_id)})
 
-    def handle_start_task(self, path: str) -> None:
+    def handle_start_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "start")
         if task_id is None:
             return
-        self.send_json({"message": start_task_cmd(TaskStore(self.db_path), task_id)})
+        self.send_json({"message": start_task_cmd(TaskStore(self.db_path), task_id, user_id=user_id)})
 
-    def handle_reopen_task(self, path: str) -> None:
+    def handle_reopen_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "reopen")
         if task_id is None:
             return
-        self.send_json({"message": reopen_task_cmd(TaskStore(self.db_path), task_id)})
+        self.send_json({"message": reopen_task_cmd(TaskStore(self.db_path), task_id, user_id=user_id)})
 
-    def _extract_task_id(self, path: str, suffix: str) -> int | None:
+    def _extract_task_id(self, path: str, suffix: str | None = None) -> int | None:
         parts = path.strip("/").split("/")
-        try:
-            idx = parts.index(suffix)
-            task_id = int(parts[idx - 1])
-        except (IndexError, ValueError):
-            self.send_json({"error": "任务 ID 无效。"}, HTTPStatus.BAD_REQUEST)
-            return None
-        return task_id
+        if suffix:
+            # Extract task ID using suffix method (e.g., /api/tasks/{id}/done)
+            try:
+                idx = parts.index(suffix)
+                task_id = int(parts[idx - 1])
+            except (IndexError, ValueError):
+                self.send_json({"error": "任务 ID 无效。"}, HTTPStatus.BAD_REQUEST)
+                return None
+            return task_id
+        else:
+            # Extract task ID from path like /api/tasks/{id}/subtasks
+            for i, part in enumerate(parts):
+                if part == "tasks" and i + 1 < len(parts):
+                    try:
+                        return int(parts[i + 1])
+                    except ValueError:
+                        pass
+            return -1
 
     def handle_chat(self, user_id: str) -> None:
         payload = self.read_json()
@@ -664,17 +675,6 @@ class MomentumHandler(BaseHTTPRequestHandler):
             "message": f"已设置默认位置为：{city}",
             "city": city
         })
-
-    def _extract_task_id(self, path: str) -> int:
-        """Extract task ID from path like /api/tasks/{id}/subtasks"""
-        parts = path.split("/")
-        for i, part in enumerate(parts):
-            if part == "tasks" and i + 1 < len(parts):
-                try:
-                    return int(parts[i + 1])
-                except ValueError:
-                    pass
-        return -1
 
     def handle_get_subtasks(self, path: str, user_id: str) -> None:
         """Get all subtasks for a parent task"""
