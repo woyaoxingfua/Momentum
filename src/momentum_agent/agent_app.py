@@ -560,7 +560,7 @@ _sessions: dict[str, object] = {}
 
 
 SESSION_LIMIT: int | None = None
-SESSION_VERSION = "v4"  # 完全重写了对话历史处理逻辑
+SESSION_VERSION = "v5"  # 恢复 SQLiteSession，但更安全的历史验证
 
 
 def _extract_text(content: object) -> str:
@@ -594,20 +594,13 @@ def _is_empty_assistant_message(item: object) -> bool:
 
 def _sanitize_items(items: list[object]) -> list[object]:
     """
-    清理对话历史，确保：
-    1. 不出现空的 assistant 消息
-    2. 如果有 assistant 消息带 tool_calls，后面必须有对应的 tool 响应消息
-    3. 如果发现不完整的调用序列，直接截断清除
+    安全的对话历史清理策略：
+    1. 只保留 user 和 assistant 纯文本对话，过滤掉所有 tool_calls 和 tool 响应
+    2. 这样虽然会丢失一些上下文，但能保证对话历史永远不会出错！
     """
     result: list[object] = []
-    pending_tool_calls: set[str] = set()
-    skip_remaining = False
     
     for item in items:
-        if skip_remaining:
-            break
-        
-        # 安全地提取 item 内容
         is_dict = isinstance(item, dict)
         role = item.get("role") if is_dict else getattr(item, "role", None)
         tool_calls = item.get("tool_calls") if is_dict else getattr(item, "tool_calls", None)
@@ -616,57 +609,16 @@ def _sanitize_items(items: list[object]) -> list[object]:
         if is_dict and _is_empty_assistant_message(item):
             continue
         
-        # 处理带 tool_calls 的 assistant 消息
+        # 过滤掉带 tool_calls 的 assistant 消息
         if role == "assistant" and tool_calls:
-            # 收集这些 call_ids
-            current_calls: set[str] = set()
-            for tc in tool_calls:
-                if isinstance(tc, dict):
-                    cid = tc.get("id")
-                else:
-                    cid = getattr(tc, "id", None)
-                if cid:
-                    current_calls.add(cid)
-            
-            if current_calls:
-                pending_tool_calls.update(current_calls)
-                result.append(item)
-                continue
-        
-        # 处理 tool 响应消息
-        if role == "tool":
-            tool_call_id = item.get("tool_call_id") if is_dict else getattr(item, "tool_call_id", None)
-            if tool_call_id:
-                pending_tool_calls.discard(tool_call_id)
-            result.append(item)
             continue
         
-        # 正常的消息（user 或 assistant 无调用）
-        # 先检查是否有未完成的 pending calls，有的话要截断，从当前消息重新开始
-        if pending_tool_calls:
-            # 还有未完成的 tool calls，说明之前的对话有问题，直接截断，重新开始
-            log.warning("发现不完整的 tool_calls，清空对话历史重新开始")
-            result = []
-            pending_tool_calls.clear()
+        # 过滤掉 tool 响应消息
+        if role == "tool":
+            continue
         
+        # 只保留纯 user 和 assistant 文本消息
         result.append(item)
-    
-    # 最终检查
-    if pending_tool_calls:
-        # 对话结束时还有未完成的 tool calls，移除最后的 assistant 调用消息
-        final_result: list[object] = []
-        for item in reversed(result):
-            is_dict = isinstance(item, dict)
-            role = item.get("role") if is_dict else getattr(item, "role", None)
-            tool_calls = item.get("tool_calls") if is_dict else getattr(item, "tool_calls", None)
-            
-            if role == "assistant" and tool_calls:
-                # 遇到带调用的 assistant 消息就停止，不添加这条
-                pending_tool_calls.clear()
-                break
-            final_result.append(item)
-        final_result.reverse()
-        result = final_result
     
     return result
 
@@ -747,10 +699,10 @@ def _cleanup_session_db(db_path: Path, session_id: str) -> None:
 
 def _get_session(db_path: Path, user_id: str):
     """
-    返回一个临时的内存 session，不持久化到磁盘。
-    避免因为不完整的 tool_calls 导致的错误。
+    使用 SQLiteSession 持久化对话历史，但仅保留纯文本消息，
+    过滤掉所有 tool_calls 和 tool 响应，避免格式错误。
     """
-    from agents import Session
+    from agents import SQLiteSession
 
     key = str(db_path.resolve())
     if key not in _sessions:
@@ -758,32 +710,34 @@ def _get_session(db_path: Path, user_id: str):
     sessions_for_db = _sessions[key]
     
     if user_id not in sessions_for_db:
-        # 使用内存 session，每次重启都清空
+        session_id = f"{user_id}-{SESSION_VERSION}"
+        session_path = db_path.parent / f".momentum_sessions_{user_id}_{SESSION_VERSION}.db"
         from agents import SessionSettings
-        base_session = Session(
-            session_id=f"{user_id}-{SESSION_VERSION}",
+        _cleanup_session_db(session_path, session_id)
+        base_session = SQLiteSession(
+            session_id=session_id,
+            db_path=str(session_path),
             session_settings=SessionSettings(limit=SESSION_LIMIT),
         )
         
-        # 保持相同的接口
-        class _TempSession:
+        class _SafeSession:
             session_id = base_session.session_id
             session_settings = base_session.session_settings
-            
+
             async def get_items(self, limit: int | None = None):
                 items = await base_session.get_items(limit)
                 return _sanitize_items(items)
-            
+
             async def add_items(self, items):
                 await base_session.add_items(_sanitize_items(list(items)))
-            
+
             async def pop_item(self):
                 return await base_session.pop_item()
-            
+
             async def clear_session(self):
                 return await base_session.clear_session()
-        
-        sessions_for_db[user_id] = _TempSession()
+
+        sessions_for_db[user_id] = _SafeSession()
     
     return sessions_for_db[user_id]
 
