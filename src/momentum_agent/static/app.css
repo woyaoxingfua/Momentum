@@ -54,6 +54,25 @@ button.primary:hover {
   background: var(--accent-strong);
 }
 
+button.success {
+  background: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
+  pointer-events: none;
+}
+
+button.error {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #ffffff;
+  pointer-events: none;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;

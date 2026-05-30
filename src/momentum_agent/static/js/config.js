@@ -24,22 +24,56 @@ export async function loadConfig() {
 }
 
 export async function saveConfig() {
-  const entries = [
-    ["daily_capacity_minutes", elements.configCapacity.value || "45"],
-    ["working_hours_start", elements.configWorkStart.value || "09:00"],
-    ["working_hours_end", elements.configWorkEnd.value || "18:00"],
-  ];
-  for (const [key, value] of entries) {
-    await requestJson("/api/config", {
-      method: "POST",
-      body: JSON.stringify({ key, value }),
-    });
+  const saveButton = document.querySelector("#configSaveButton");
+  const originalText = saveButton.textContent;
+  
+  try {
+    // 显示保存中状态
+    saveButton.textContent = "保存中...";
+    saveButton.disabled = true;
+    
+    const entries = [
+      ["daily_capacity_minutes", elements.configCapacity.value || "45"],
+      ["working_hours_start", elements.configWorkStart.value || "09:00"],
+      ["working_hours_end", elements.configWorkEnd.value || "18:00"],
+    ];
+    for (const [key, value] of entries) {
+      await requestJson("/api/config", {
+        method: "POST",
+        body: JSON.stringify({ key, value }),
+      });
+    }
+
+    // 保存心跳配置
+    const { saveHeartbeatConfig } = await import("./heartbeat.js");
+    await saveHeartbeatConfig();
+
+    const { loadAdvice } = await import("./advice.js");
+    await loadAdvice();
+    
+    // 显示成功提示
+    saveButton.textContent = "✓ 已保存";
+    saveButton.classList.add("success");
+    
+    // 3秒后恢复原状
+    setTimeout(() => {
+      saveButton.textContent = originalText;
+      saveButton.disabled = false;
+      saveButton.classList.remove("success");
+    }, 2000);
+    
+  } catch (error) {
+    // 显示错误提示
+    saveButton.textContent = "保存失败";
+    saveButton.classList.add("error");
+    
+    // 3秒后恢复原状
+    setTimeout(() => {
+      saveButton.textContent = originalText;
+      saveButton.disabled = false;
+      saveButton.classList.remove("error");
+    }, 3000);
+    
+    console.error("保存配置失败:", error);
   }
-
-  // 保存心跳配置
-  const { saveHeartbeatConfig } = await import("./heartbeat.js");
-  await saveHeartbeatConfig();
-
-  const { loadAdvice } = await import("./advice.js");
-  await loadAdvice();
 }
