@@ -83,19 +83,14 @@
           <summary>偏好设置</summary>
           <div class="config-form">
             <h4 style="margin: 0 0 12px; font-size: 14px;">AI 配置</h4>
-            <label>OpenAI API Key
+            <label>API Key
               <input id="configApiKey" type="password" placeholder="sk-... 留空使用本地 fallback" />
             </label>
             <label>API 基础地址
-              <input id="configApiBase" type="text" placeholder="https://api.openai.com/v1" />
+              <input id="configApiBase" type="text" placeholder="https://api.openai.com/v1 或第三方兼容地址" />
             </label>
-            <label>模型
-              <select id="configModel">
-                <option value="gpt-4o">gpt-4o</option>
-                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                <option value="gpt-4">gpt-4</option>
-                <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-              </select>
+            <label>模型名称
+              <input id="configModel" type="text" placeholder="如：gpt-4o、claude-3-opus、deepseek-chat 等" />
             </label>
             <div class="config-divider"></div>
             <h4 style="margin: 0 0 12px; font-size: 14px;">工作配置</h4>
