@@ -879,19 +879,19 @@ async def _build_input_guardrail():
             if user_parts:
                 if not text or len(text) < 1:
                     return GuardrailFunctionOutput(output_info="empty input", tripwire_triggered=True)
-                if len(text) > 2000:
+                if len(text) > 10000:
                     return GuardrailFunctionOutput(output_info="input too long", tripwire_triggered=True)
         elif isinstance(input_text, str):
             text = input_text.strip()
             if not text or len(text) < 1:
                 return GuardrailFunctionOutput(output_info="empty input", tripwire_triggered=True)
-            if len(text) > 2000:
+            if len(text) > 10000:
                 return GuardrailFunctionOutput(output_info="input too long", tripwire_triggered=True)
         else:
             text = str(input_text).strip() if input_text else ""
             if not text or len(text) < 1:
                 return GuardrailFunctionOutput(output_info="empty input", tripwire_triggered=True)
-            if len(text) > 2000:
+            if len(text) > 10000:
                 return GuardrailFunctionOutput(output_info="input too long", tripwire_triggered=True)
         return GuardrailFunctionOutput(output_info="ok", tripwire_triggered=False)
 

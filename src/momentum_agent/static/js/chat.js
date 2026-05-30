@@ -119,7 +119,7 @@ export async function sendChat(event) {
             } else if (parsed.chunk) {
               fullText += parsed.chunk;
             }
-            agentItem.textContent = fullText || "…";
+            agentItem.innerHTML = renderMarkdown(fullText || "…");
             chatLog.scrollTop = chatLog.scrollHeight;
           } catch {
             // skip malformed lines
@@ -183,7 +183,7 @@ export async function sendToAgent(message) {
             } else if (parsed.chunk) {
               fullText += parsed.chunk;
             }
-            agentItem.textContent = fullText || "…";
+            agentItem.innerHTML = renderMarkdown(fullText || "…");
             chatLog.scrollTop = chatLog.scrollHeight;
           } catch {
             // skip malformed lines
