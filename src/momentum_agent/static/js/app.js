@@ -245,9 +245,16 @@ async function planTask() {
 
 initTasks(
   { tasks: els.tasks, taskCount: els.taskCount },
-  { editDialog: els.editDialog, editTaskId: els.editTaskId, editTitle: els.editTitle,
-    editDue: els.editDue, editPriority: els.editPriority, editEstimate: els.editEstimate,
-    editNotes: els.editNotes },
+  { 
+    editDialog: els.editDialog, 
+    editTaskId: els.editTaskId, 
+    editTitle: els.editTitle,
+    editDue: els.editDue, 
+    editPriority: els.editPriority, 
+    editEstimate: els.editEstimate,
+    editTags: els.editTags,
+    editNotes: els.editNotes 
+  },
 );
 initChat(els.chatLog, els.chatInput);
 setAfterChat(refreshAll);
