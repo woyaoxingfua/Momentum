@@ -276,6 +276,7 @@ class TaskStore:
         now = utcnow()
         log.info("update_status task=%d status=%s user=%r", task_id, status.value, user_id)
         old_parent_id = None
+        has_subtasks = False
         with self._connect() as conn:
             if user_id is not None:
                 old = conn.execute(
@@ -304,11 +305,38 @@ class TaskStore:
                 (task_id, "status_changed", status.value, encode_dt(now)),
             )
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            subtasks = conn.execute(
+                "SELECT id FROM tasks WHERE parent_task_id = ?", (task_id,)
+            ).fetchall()
+            has_subtasks = len(subtasks) > 0
         task = row_to_task(row) if row else None
-        # 先保存 old_parent_id 再退出 with 块，避免嵌套事务问题
+        
+        if task and status == TaskStatus.DONE and has_subtasks:
+            self._complete_all_subtasks(task_id, user_id)
+        
         if task and status == TaskStatus.DONE and old_parent_id:
             self._auto_complete_parent(old_parent_id)
+        
         return task
+    
+    def _complete_all_subtasks(self, parent_task_id: int, user_id: str | None) -> None:
+        log.info("auto-completing all subtasks for parent task #%d", parent_task_id)
+        now = utcnow()
+        with self._connect() as conn:
+            if user_id:
+                conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE parent_task_id = ? AND status != ? AND user_id = ?",
+                    (TaskStatus.DONE.value, encode_dt(now), parent_task_id, TaskStatus.DONE.value, user_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE parent_task_id = ? AND status != ?",
+                    (TaskStatus.DONE.value, encode_dt(now), parent_task_id, TaskStatus.DONE.value),
+                )
+            conn.execute(
+                "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                (parent_task_id, "subtasks_completed", None, encode_dt(now)),
+            )
 
     def update_task(
         self,
