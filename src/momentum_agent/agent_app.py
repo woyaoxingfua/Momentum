@@ -924,7 +924,6 @@ async def run_agent_message(
     set_default_openai_client(openai_client, use_for_tracing=not provider.disable_tracing)
 
     agent = _build_agent(store, provider, openai_client, user_id=user_id)
-    session = _get_session(db_path, user_id)
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
 
@@ -942,7 +941,6 @@ async def run_agent_message(
         result = await Runner.run(
             agent, agent_input,
             max_turns=30,
-            session=session,
             hooks=_make_hooks(),
             run_config=RunConfig(
                 output_guardrails=[out_guardrail],
@@ -953,7 +951,6 @@ async def run_agent_message(
         result = await Runner.run(
             agent, message,
             max_turns=30,
-            session=session,
             hooks=_make_hooks(),
             run_config=RunConfig(
                 input_guardrails=[guardrail],
@@ -1001,7 +998,6 @@ async def run_agent_message_stream(
     set_default_openai_client(openai_client, use_for_tracing=not provider.disable_tracing)
 
     agent = _build_agent(store, provider, openai_client, user_id=user_id)
-    session = _get_session(db_path, user_id)
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
 
@@ -1019,7 +1015,6 @@ async def run_agent_message_stream(
         result_vision = await Runner.run(
             agent, agent_input,
             max_turns=30,
-            session=session,
             hooks=_make_hooks(),
             run_config=RunConfig(
                 output_guardrails=[out_guardrail],
@@ -1034,7 +1029,6 @@ async def run_agent_message_stream(
     result = Runner.run_streamed(
         agent, message,
         max_turns=30,
-        session=session,
         hooks=_make_hooks(),
         run_config=RunConfig(
             input_guardrails=[guardrail],
