@@ -11,8 +11,8 @@ project_root = Path('.')
 src_dir = project_root / 'src'
 
 a = Analysis(
-    [str(src_dir / 'momentum_agent' / 'cli.py')],
-    pathex=[str(project_root)],
+    [str(src_dir / 'momentum_agent' / '__main__.py')],
+    pathex=[str(project_root), str(src_dir)],
     binaries=[],
     datas=[
         (str(src_dir / 'momentum_agent' / 'static'), 'momentum_agent/static')],
@@ -20,6 +20,17 @@ a = Analysis(
         'openai_agents',
         'pydantic',
         'dotenv',
+        'momentum_agent',
+        'momentum_agent.agent_app',
+        'momentum_agent.config',
+        'momentum_agent.logger',
+        'momentum_agent.models',
+        'momentum_agent.storage',
+        'momentum_agent.web',
+        'momentum_agent.context',
+        'momentum_agent.planner',
+        'momentum_agent.parser',
+        'momentum_agent.auth',
     ],
     hookspath=[],
     hooksconfig={},
