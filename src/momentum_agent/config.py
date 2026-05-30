@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -36,7 +37,10 @@ class ProviderConfig:
 
 
 def load_provider_config(user_config: dict[str, str] | None = None) -> ProviderConfig:
-    load_dotenv()
+    project_root = Path(__file__).resolve().parent.parent.parent
+    env_file = project_root / ".env"
+    if env_file.exists():
+        load_dotenv(dotenv_path=str(env_file))
     disable_tracing = parse_optional_bool(first_env("MOMENTUM_DISABLE_TRACING"))
     if disable_tracing is None:
         disable_tracing = bool(first_env("MOMENTUM_BASE_URL", "OPENAI_BASE_URL"))
