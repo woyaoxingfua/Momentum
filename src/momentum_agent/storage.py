@@ -406,8 +406,8 @@ class TaskStore:
             log.info("auto-completing parent task #%d", parent_id)
             self.update_status(parent_id, TaskStatus.DONE)
 
-    def complete_recurring_task(self, task_id: int) -> Task | None:
-        task = self.update_status(task_id, TaskStatus.DONE)
+    def complete_recurring_task(self, task_id: int, *, user_id: str | None = None) -> Task | None:
+        task = self.update_status(task_id, TaskStatus.DONE, user_id=user_id)
         if task is None or not task.recurrence:
             return task
         log.info("recurring task #%d completed, creating next instance", task_id)

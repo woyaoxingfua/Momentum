@@ -189,6 +189,7 @@ def edit_task_from_params(
     priority: str | None = None,
     estimated_minutes: int | None = None,
     notes: str | None = None,
+    tags: list[str] | None = None,
     user_id: str = DEFAULT_USER_ID,
 ) -> str:
     log.info("edit_task id=%d user=%r", task_id, user_id)
@@ -210,6 +211,7 @@ def edit_task_from_params(
         priority=parsed_priority,
         estimated_minutes=estimated_minutes,
         notes=notes,
+        tags=tags,
         user_id=user_id,
     )
     if task is None:

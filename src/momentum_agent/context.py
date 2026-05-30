@@ -59,22 +59,48 @@ def _estimate_energy(now: datetime, start: str | None, end: str | None) -> str:
 
 def choose_next_action(tasks: list[Task], context: UserContext) -> str:
     if not tasks:
-        return "今天没有待办。可以先补充一个最想推进的任务。"
+        return "💫 今天没有待办！这是个很棒的状态，建议花 5 分钟规划一个最想推进的小目标。"
 
     task = ranked_tasks(tasks, context)[0]
     minutes = task.estimated_minutes or 25
 
+    # 场景化建议
     if task.due_at and task.due_at < context.now:
-        return f"「{task.title}」已经过期，建议今天先处理或重新设定截止时间。"
+        overdue_days = (context.now - task.due_at).days
+        if overdue_days <= 1:
+            return f"⚠️ 「{task.title}」刚过期，今天花 {minutes} 分钟处理完它，或者重新设定一个合理的截止时间。"
+        else:
+            return f"⏰ 「{task.title}」已过期 {overdue_days} 天，建议：要么立即处理，要么果断调整截止时间或放弃。"
+    
+    # 检查是否有正在进行的任务
+    doing_tasks = [t for t in tasks if t.status.value == "doing"]
+    if doing_tasks:
+        return f"🔄 你有进行中的任务「{doing_tasks[0].title}」，建议先完成它再开始新任务，保持专注！"
 
+    # 大任务建议
     if minutes > context.available_minutes_today:
-        return f"先推进「{task.title}」的一个 20 分钟版本：只做最小可交付的一步。"
+        return f"📐 「{task.title}」估计需要 {minutes} 分钟，今天先做一个 20 分钟的简化版本：只完成最核心的一步。"
 
+    # 父子任务建议
     if task.parent_task_id is None and any(child.parent_task_id == task.id for child in tasks):
         child = next(child for child in ranked_tasks(tasks, context) if child.parent_task_id == task.id)
-        return f"「{task.title}」比较大，今天先做子任务「{child.title}」。"
+        return f"📋 「{task.title}」是个大任务，从子任务「{child.title}」开始吧！这样更容易获得成就感。"
+    
+    # 根据时间段给出建议
+    hour = context.now.hour
+    time_suggestion = ""
+    if hour < 10:
+        time_suggestion = "清晨是处理困难任务的好时机！"
+    elif hour < 12:
+        time_suggestion = "上午精力充沛，适合专注攻坚！"
+    elif hour < 14:
+        time_suggestion = "午间时间，可以处理一些轻松的任务。"
+    elif hour < 17:
+        time_suggestion = "下午状态不错，继续保持节奏！"
+    else:
+        time_suggestion = "晚上时间，适合做一些整理或回顾工作。"
 
-    return f"今天优先做「{task.title}」，预计 {minutes} 分钟内完成一个明确进展。"
+    return f"✅ {time_suggestion}\n今天优先做「{task.title}」，预计 {minutes} 分钟就能看到明确进展。"
 
 
 def ranked_tasks(tasks: list[Task], context: UserContext) -> list[Task]:
@@ -112,7 +138,7 @@ def task_score(task: Task, context: UserContext) -> int:
 
 def daily_review(tasks: list[Task], context: UserContext) -> str:
     if not tasks:
-        return "今天没有开放任务。建议补一个最重要的小目标，控制在 30 分钟内。"
+        return "✨ 太棒了！当前没有开放任务。\n💡 建议：花 10 分钟规划一个明天最想完成的小目标，或者享受这段闲暇时光！"
 
     overdue = [task for task in tasks if task.due_at and task.due_at < context.now]
     due_soon = [
@@ -120,19 +146,79 @@ def daily_review(tasks: list[Task], context: UserContext) -> str:
         for task in tasks
         if task.due_at and context.now <= task.due_at <= context.now + timedelta(days=2)
     ]
-    large = [task for task in tasks if (task.estimated_minutes or 0) >= 90]
-    next_task = ranked_tasks(tasks, context)[0]
-
-    lines = [
-        f"开放任务 {len(tasks)} 个，过期 {len(overdue)} 个，48 小时内到期 {len(due_soon)} 个。",
-        f"建议先处理「{next_task.title}」。",
+    due_today = [
+        task for task in tasks 
+        if task.due_at and task.due_at.date() == context.now.date()
     ]
+    large = [task for task in tasks if (task.estimated_minutes or 0) >= 90]
+    high_priority = [task for task in tasks if task.priority.value == "high"]
+    next_task = ranked_tasks(tasks, context)[0]
+    
+    # 统计分析
+    total_tasks = len(tasks)
+    todo_count = len([t for t in tasks if t.status.value == "todo"])
+    doing_count = len([t for t in tasks if t.status.value == "doing"])
+    
+    lines = []
+    
+    # 总体概览
+    lines.append(f"📊 任务概览：共 {total_tasks} 个开放任务")
+    if todo_count > 0:
+        lines.append(f"   • 待办：{todo_count} 个")
+    if doing_count > 0:
+        lines.append(f"   • 进行中：{doing_count} 个")
     if overdue:
-        lines.append("过期任务不要硬扛，先决定：今天处理、改截止时间，或直接放弃。")
+        lines.append(f"   • 已过期：{len(overdue)} 个 ⚠️")
+    if due_soon:
+        lines.append(f"   • 48小时内到期：{len(due_soon)} 个")
+    if high_priority:
+        lines.append(f"   • 高优先级：{len(high_priority)} 个")
+    
+    lines.append("")  # 空行
+    
+    # 今日重点建议
+    if due_today:
+        lines.append(f"🎯 今日重点：有 {len(due_today)} 个任务今天到期")
+        if len(due_today) <= 3:
+            lines.append(f"   分别是：{', '.join([f'「{t.title}」' for t in due_today])}")
+        else:
+            lines.append(f"   建议先完成「{due_today[0].title}」")
+    
+    if overdue:
+        lines.append("")
+        lines.append("⚠️ 关于过期任务：")
+        lines.append("   过期任务不用焦虑，可以：")
+        lines.append("   1. 挑选 1-2 个今天立即处理")
+        lines.append("   2. 重新设定更合理的截止时间")
+        lines.append("   3. 如果不再重要，果断放弃")
+    
     if large:
-        lines.append("大任务需要拆成 20-30 分钟动作，否则容易拖延。")
-    if not overdue and not large:
-        lines.append("当前节奏可控，保持每天只推进 1-2 个关键任务。")
+        lines.append("")
+        lines.append("📐 关于大任务：")
+        lines.append(f"   有 {len(large)} 个任务估计超过 90 分钟")
+        lines.append("   建议拆分成 20-30 分钟的小步骤，避免拖延")
+    
+    if not overdue and not large and total_tasks <= 5:
+        lines.append("")
+        lines.append("🎉 状态不错！任务数量和紧急程度都可控")
+        lines.append("   保持专注，每天只推进 1-2 个关键任务就很好")
+    
+    lines.append("")
+    lines.append(f"🚀 下一步建议：先从「{next_task.title}」开始")
+    
+    # 时间相关建议
+    hour = context.now.hour
+    if hour < 10:
+        lines.append("   清晨思路清晰，适合处理有挑战的任务")
+    elif hour < 12:
+        lines.append("   上午精力充沛，是高效工作的黄金时段")
+    elif hour < 14:
+        lines.append("   午间可以处理一些轻松或需要沟通的任务")
+    elif hour < 17:
+        lines.append("   下午状态稳定，继续保持专注")
+    else:
+        lines.append("   晚上适合整理、回顾或做一些轻松的收尾工作")
+    
     return "\n".join(lines)
 
 

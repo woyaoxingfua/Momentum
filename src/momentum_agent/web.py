@@ -162,15 +162,15 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 elif parsed.path == "/api/change-password":
                     self.handle_change_password(user_id)
                 elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/done"):
-                    self.handle_done_task(parsed.path)
+                    self.handle_done_task(parsed.path, user_id)
                 elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/postpone"):
-                    self.handle_postpone_task(parsed.path)
+                    self.handle_postpone_task(parsed.path, user_id)
                 elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/drop"):
-                    self.handle_drop_task(parsed.path)
+                    self.handle_drop_task(parsed.path, user_id)
                 elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/start"):
-                    self.handle_start_task(parsed.path)
+                    self.handle_start_task(parsed.path, user_id)
                 elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/reopen"):
-                    self.handle_reopen_task(parsed.path)
+                    self.handle_reopen_task(parsed.path, user_id)
                 elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/subtasks"):
                     self.handle_create_subtask(parsed.path, user_id)
                 elif parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/bulk-subtasks"):
@@ -255,12 +255,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
         message = create_plan_from_text(store, text, user_id=user_id)
         self.send_json({"message": message, "tasks": [task_to_json(t) for t in store.list_tasks(user_id=user_id)]})
 
-    def handle_done_task(self, path: str) -> None:
+    def handle_done_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "done")
         if task_id is None:
             return
         store = TaskStore(self.db_path)
-        next_task = store.complete_recurring_task(task_id)
+        next_task = store.complete_recurring_task(task_id, user_id=user_id)
         if next_task and next_task.recurrence:
             self.send_json({"message": f"已创建下一期任务 #{next_task.id}：{next_task.title}"})
         elif next_task:
@@ -279,35 +279,35 @@ class MomentumHandler(BaseHTTPRequestHandler):
             TaskStore(self.db_path), task_id,
             title=payload.get("title"), due_at=payload.get("due_at"),
             priority=payload.get("priority"), estimated_minutes=payload.get("estimated_minutes"),
-            notes=payload.get("notes"), user_id=user_id,
+            notes=payload.get("notes"), tags=payload.get("tags"), user_id=user_id,
         )
         self.send_json({"message": message})
 
-    def handle_postpone_task(self, path: str) -> None:
+    def handle_postpone_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "postpone")
         if task_id is None:
             return
         payload = self.read_json()
         days = int(payload.get("days", 3))
-        self.send_json({"message": postpone_task_cmd(TaskStore(self.db_path), task_id, days)})
+        self.send_json({"message": postpone_task_cmd(TaskStore(self.db_path), task_id, days, user_id=user_id)})
 
-    def handle_drop_task(self, path: str) -> None:
+    def handle_drop_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "drop")
         if task_id is None:
             return
-        self.send_json({"message": drop_task_cmd(TaskStore(self.db_path), task_id)})
+        self.send_json({"message": drop_task_cmd(TaskStore(self.db_path), task_id, user_id=user_id)})
 
-    def handle_start_task(self, path: str) -> None:
+    def handle_start_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "start")
         if task_id is None:
             return
-        self.send_json({"message": start_task_cmd(TaskStore(self.db_path), task_id)})
+        self.send_json({"message": start_task_cmd(TaskStore(self.db_path), task_id, user_id=user_id)})
 
-    def handle_reopen_task(self, path: str) -> None:
+    def handle_reopen_task(self, path: str, user_id: str) -> None:
         task_id = self._extract_task_id(path, "reopen")
         if task_id is None:
             return
-        self.send_json({"message": reopen_task_cmd(TaskStore(self.db_path), task_id)})
+        self.send_json({"message": reopen_task_cmd(TaskStore(self.db_path), task_id, user_id=user_id)})
 
     def _extract_task_id(self, path: str, suffix: str) -> int | None:
         parts = path.strip("/").split("/")
