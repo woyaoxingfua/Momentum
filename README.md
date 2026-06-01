@@ -2,6 +2,8 @@
 
 一个基于 OpenAI Agents SDK 的个人任务待办助手。SQLite 存储，CLI + Web 双界面，支持自然语言交互、任务关系、标签系统、心跳提醒、AI 视觉识别。
 
+在线体验:https://myfirst.cc.cd
+
 ## 功能
 
 ### 核心功能
