@@ -44,12 +44,12 @@ class TestBehavioralProfile:
         assert "completion_rate" in d
         assert "burnout_risk" in d
         assert "peak_completion_hour" in d
+        assert "consistency_score" in d
 
 
 class TestInsightsGeneration:
     def test_no_tasks_no_insights(self, engine):
         insights = engine.generate_insights([])
-        # Should have no risk insights when there are no tasks
         risk_insights = [i for i in insights if i.category == "risk"]
         assert len(risk_insights) == 0
 
@@ -88,6 +88,49 @@ class TestStrategicSummary:
         summary = engine.get_strategic_summary()
         assert isinstance(summary, str)
         assert len(summary) > 0
+
+
+class TestWeeklyPattern:
+    def test_empty_pattern(self, engine):
+        pattern = engine.get_weekly_pattern()
+        assert isinstance(pattern, dict)
+
+    def test_pattern_with_data(self, store, engine):
+        store.create_task("任务1")
+        store.update_status(1, TaskStatus.DONE)
+        pattern = engine.get_weekly_pattern()
+        assert isinstance(pattern, dict)
+
+
+class TestTaskTypeAnalysis:
+    def test_empty_analysis(self, engine):
+        analysis = engine.get_task_type_analysis()
+        assert "completed_tags" in analysis
+        assert "dropped_tags" in analysis
+
+    def test_analysis_with_tags(self, store, engine):
+        store.create_task("任务1", tags=["work", "urgent"])
+        store.create_task("任务2", tags=["personal"])
+        store.update_status(1, TaskStatus.DONE)
+        store.update_status(2, TaskStatus.DROPPED)
+
+        analysis = engine.get_task_type_analysis()
+        assert "work" in analysis["completed_tags"]
+        assert "personal" in analysis["dropped_tags"]
+
+
+class TestConsistencyScore:
+    def test_empty_consistency(self, engine):
+        score = engine.get_consistency_score()
+        assert score == 0.0
+
+    def test_consistency_with_data(self, store, engine):
+        for i in range(5):
+            store.create_task(f"任务{i}")
+            store.update_status(i + 1, TaskStatus.DONE)
+
+        score = engine.get_consistency_score()
+        assert 0.0 <= score <= 1.0
 
 
 class TestInsightDataclass:

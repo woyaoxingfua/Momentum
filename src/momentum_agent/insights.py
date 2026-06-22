@@ -37,11 +37,12 @@ class BehavioralProfile:
     # 偏好模式
     peak_completion_hour: int | None = None  # 最常完成任务的时段
     preferred_task_duration: int | None = None  # 用户实际偏好任务时长
-    procrastination_types: list[str] = field(default_factory=list)  # 容易拖延的任务类型（从标签/标题推断）
+    procrastination_types: list[str] = field(default_factory=list)  # 容易拖延的任务类型
 
     # 周期模式
     productive_days: list[str] = field(default_factory=list)  # 产出最高的日子
     avg_tasks_per_day: float = 0.0
+    consistency_score: float = 0.0  # 一致性得分（0-1）
 
     # 风险信号
     overdue_trend: str = "stable"  # stable / increasing / decreasing
@@ -61,6 +62,7 @@ class BehavioralProfile:
             "procrastination_types": self.procrastination_types,
             "productive_days": self.productive_days,
             "avg_tasks_per_day": self.avg_tasks_per_day,
+            "consistency_score": self.consistency_score,
             "overdue_trend": self.overdue_trend,
             "burnout_risk": self.burnout_risk,
         }
@@ -276,7 +278,36 @@ class InsightsEngine:
             elif prev_done > 0 and recent_done < prev_done * 0.6:
                 profile.burnout_risk = "medium"
 
+        # ── 一致性得分 ──────────────────────────────────────
+        profile.consistency_score = self._calc_consistency(conn, user_id)
+
         return profile
+
+    def _calc_consistency(self, conn: sqlite3.Connection, user_id: str) -> float:
+        """计算每日完成任务的一致性。"""
+        rows = conn.execute(
+            """
+            SELECT DATE(updated_at) as day, COUNT(*) as cnt
+            FROM tasks
+            WHERE user_id = ? AND status = 'done' AND updated_at > datetime('now', '-14 days')
+            GROUP BY day
+            """,
+            (user_id,),
+        ).fetchall()
+
+        if len(rows) < 3:
+            return 0.0
+
+        counts = [r["cnt"] for r in rows]
+        avg = sum(counts) / len(counts)
+        if avg == 0:
+            return 0.0
+
+        variance = sum((x - avg) ** 2 for x in counts) / len(counts)
+        std_dev = variance ** 0.5
+        cv = std_dev / avg
+
+        return round(max(0.0, min(1.0, 1.0 - cv)), 2)
 
     def generate_insights(
         self, tasks: list[Task], user_id: str = "default"
@@ -407,9 +438,104 @@ class InsightsEngine:
         insights.sort(key=lambda x: -x.priority)
         return insights
 
+    def get_weekly_pattern(self, user_id: str = "default") -> dict:
+        """分析每周产出模式。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT strftime('%w', updated_at) as weekday, COUNT(*) as cnt
+                FROM tasks
+                WHERE user_id = ? AND status = 'done'
+                GROUP BY weekday
+                ORDER BY cnt DESC
+                """,
+                (user_id,),
+            ).fetchall()
+
+        day_map = {"0": "周日", "1": "周一", "2": "周二", "3": "周三", "4": "周四", "5": "周五", "6": "周六"}
+        pattern = {}
+        for r in rows:
+            pattern[day_map.get(r["weekday"], r["weekday"])] = r["cnt"]
+        return pattern
+
+    def get_task_type_analysis(self, user_id: str = "default") -> dict:
+        """分析任务类型偏好（基于标签）。"""
+        with self._connect() as conn:
+            # 完成的任务标签分布
+            done_tags = conn.execute(
+                """
+                SELECT tags FROM tasks
+                WHERE user_id = ? AND status = 'done' AND tags IS NOT NULL
+                """,
+                (user_id,),
+            ).fetchall()
+
+            # 放弃的任务标签分布
+            dropped_tags = conn.execute(
+                """
+                SELECT tags FROM tasks
+                WHERE user_id = ? AND status = 'dropped' AND tags IS NOT NULL
+                """,
+                (user_id,),
+            ).fetchall()
+
+        from collections import Counter
+        done_counter = Counter()
+        dropped_counter = Counter()
+
+        for row in done_tags:
+            if row["tags"]:
+                for tag in row["tags"].split(","):
+                    tag = tag.strip()
+                    if tag:
+                        done_counter[tag] += 1
+
+        for row in dropped_tags:
+            if row["tags"]:
+                for tag in row["tags"].split(","):
+                    tag = tag.strip()
+                    if tag:
+                        dropped_counter[tag] += 1
+
+        return {
+            "completed_tags": dict(done_counter.most_common(10)),
+            "dropped_tags": dict(dropped_counter.most_common(10)),
+        }
+
+    def get_consistency_score(self, user_id: str = "default") -> float:
+        """计算一致性得分（0-1，基于每日完成任务的稳定性）。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DATE(updated_at) as day, COUNT(*) as cnt
+                FROM tasks
+                WHERE user_id = ? AND status = 'done' AND updated_at > datetime('now', '-14 days')
+                GROUP BY day
+                """,
+                (user_id,),
+            ).fetchall()
+
+        if len(rows) < 3:
+            return 0.0
+
+        counts = [r["cnt"] for r in rows]
+        avg = sum(counts) / len(counts)
+        if avg == 0:
+            return 0.0
+
+        variance = sum((x - avg) ** 2 for x in counts) / len(counts)
+        std_dev = variance ** 0.5
+        cv = std_dev / avg  # coefficient of variation
+
+        # Lower CV = more consistent = higher score
+        score = max(0.0, min(1.0, 1.0 - cv))
+        return round(score, 2)
+
     def get_strategic_summary(self, user_id: str = "default") -> str:
         """生成战略摘要 — 一段话总结用户的行为模式和建议。"""
         profile = self.build_profile(user_id)
+        consistency = self.get_consistency_score(user_id)
+        weekly = self.get_weekly_pattern(user_id)
 
         parts = []
 
@@ -433,6 +559,18 @@ class InsightsEngine:
         # 高效时段
         if profile.peak_completion_hour is not None:
             parts.append(f"你在 {profile.peak_completion_hour}:00 左右最常完成任务。")
+
+        # 一致性
+        if consistency > 0:
+            if consistency > 0.7:
+                parts.append(f"你的工作节奏很稳定（一致性 {consistency:.0%}），这是好习惯。")
+            elif consistency < 0.4:
+                parts.append(f"你的产出波动较大（一致性 {consistency:.0%}），试着建立固定的工作节奏。")
+
+        # 最佳工作日
+        if weekly:
+            best_day = max(weekly, key=weekly.get)
+            parts.append(f"你通常在{best_day}产出最多。")
 
         # 风险
         if profile.burnout_risk == "high":
