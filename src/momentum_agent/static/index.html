@@ -2,9 +2,13 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Momentum Task Agent</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#20c997" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Momentum</title>
     <link rel="stylesheet" href="/app.css" />
+    <link rel="manifest" href="/manifest.json" />
   </head>
   <body>
     <main class="shell">
@@ -75,9 +79,11 @@
       </section>
 
       <aside class="coach" aria-label="Agent 对话">
-        <div class="section-heading">
-          <h2>Agent</h2>
-          <span class="muted" id="providerStatus">读取服务商...</span>
+        <div class="coach-header">
+          <div class="section-heading">
+            <h2>Agent</h2>
+            <span class="muted" id="providerStatus">读取服务商...</span>
+          </div>
         </div>
         <div id="chatLog" class="chat-log"></div>
         <form id="chatForm" class="chat-form">
@@ -132,6 +138,96 @@
       </aside>
     </main>
 
+    <!-- Mobile Bottom Nav -->
+    <nav class="mobile-nav">
+      <div class="mobile-nav-items">
+        <button class="mobile-nav-item active" data-panel="tasks">
+          <span>📋</span>
+          <span>任务</span>
+        </button>
+        <button class="mobile-nav-item" data-panel="chat">
+          <span>🤖</span>
+          <span>Agent</span>
+        </button>
+        <button class="mobile-nav-item" data-panel="insights">
+          <span>📊</span>
+          <span>洞察</span>
+        </button>
+        <button class="mobile-nav-item" data-panel="settings">
+          <span>⚙️</span>
+          <span>设置</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Mobile Panels -->
+    <div class="mobile-panel" id="mobileChatPanel">
+      <div class="mobile-panel-header">
+        <h2>Agent</h2>
+        <button class="mobile-panel-close" onclick="closeMobilePanel()">✕</button>
+      </div>
+      <div class="mobile-panel-body">
+        <div id="mobileChatLog" class="chat-log" style="min-height: 400px; max-height: none;"></div>
+        <form id="mobileChatForm" class="chat-form" style="margin-top: 12px;">
+          <input id="mobileChatInput" placeholder="让助手帮你拆分、安排或复盘" />
+          <button class="primary" type="submit">发送</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="mobile-panel" id="mobileInsightsPanel">
+      <div class="mobile-panel-header">
+        <h2>行为洞察</h2>
+        <button class="mobile-panel-close" onclick="closeMobilePanel()">✕</button>
+      </div>
+      <div class="mobile-panel-body" id="mobileInsightsBody">
+        <p style="color: var(--text-muted);">加载中...</p>
+      </div>
+    </div>
+
+    <div class="mobile-panel" id="mobileSettingsPanel">
+      <div class="mobile-panel-header">
+        <h2>设置</h2>
+        <button class="mobile-panel-close" onclick="closeMobilePanel()">✕</button>
+      </div>
+      <div class="mobile-panel-body">
+        <div class="config-form" id="mobileConfigForm">
+          <h4 style="margin: 0 0 12px; font-size: 14px;">AI 配置</h4>
+          <label>API Key
+            <input id="mobileConfigApiKey" type="password" placeholder="sk-..." />
+          </label>
+          <label>API 基础地址
+            <input id="mobileConfigApiBase" type="text" placeholder="https://api.openai.com/v1" />
+          </label>
+          <label>模型名称
+            <input id="mobileConfigModel" type="text" placeholder="如：gpt-4o、deepseek-chat" />
+          </label>
+          <label class="checkbox-label" style="margin-top: 8px;">
+            <input id="mobileConfigVisionEnabled" type="checkbox" />
+            启用视觉功能
+          </label>
+          <div class="config-divider"></div>
+          <h4 style="margin: 0 0 12px; font-size: 14px;">工作配置</h4>
+          <label>每日可用时间（分钟）
+            <input id="mobileConfigCapacity" type="number" min="0" max="480" placeholder="45" />
+          </label>
+          <label>工作时间开始
+            <input id="mobileConfigWorkStart" type="time" value="09:00" />
+          </label>
+          <label>工作时间结束
+            <input id="mobileConfigWorkEnd" type="time" value="18:00" />
+          </label>
+          <div class="config-divider"></div>
+          <label class="checkbox-label">
+            <input id="mobileConfigHeartbeatEnabled" type="checkbox" />
+            启用主动提醒
+          </label>
+          <button id="mobileConfigSaveButton" class="primary" style="margin-top: 12px;">保存设置</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dialogs -->
     <dialog id="editDialog">
       <form method="dialog" class="edit-form">
         <h3>编辑任务</h3>
@@ -195,5 +291,62 @@
     </dialog>
 
     <script type="module" src="/js/app.js"></script>
+    <script>
+      // Mobile navigation
+      function closeMobilePanel() {
+        document.querySelectorAll('.mobile-panel').forEach(p => p.classList.remove('open'));
+        document.querySelectorAll('.mobile-nav-item').forEach(b => b.classList.remove('active'));
+        document.querySelector('.mobile-nav-item[data-panel="tasks"]').classList.add('active');
+      }
+
+      document.querySelectorAll('.mobile-nav-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const panel = btn.dataset.panel;
+          document.querySelectorAll('.mobile-nav-item').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+
+          if (panel === 'tasks') {
+            closeMobilePanel();
+            return;
+          }
+
+          const panelId = {
+            chat: 'mobileChatPanel',
+            insights: 'mobileInsightsPanel',
+            settings: 'mobileSettingsPanel'
+          }[panel];
+
+          document.querySelectorAll('.mobile-panel').forEach(p => p.classList.remove('open'));
+          const el = document.getElementById(panelId);
+          if (el) {
+            el.classList.add('open');
+            // Trigger load for insights
+            if (panel === 'insights') loadMobileInsights();
+          }
+        });
+      });
+
+      async function loadMobileInsights() {
+        const body = document.getElementById('mobileInsightsBody');
+        try {
+          const token = localStorage.getItem('momentum_token');
+          const resp = await fetch('/api/advice', {
+            headers: { 'Authorization': 'Bearer ' + token }
+          });
+          const data = await resp.json();
+          body.innerHTML = `<div class="insight" style="margin-top:0;"><span class="insight-label">建议</span><p>${data.advice || '暂无建议'}</p></div>`;
+
+          const resp2 = await fetch('/api/review', {
+            headers: { 'Authorization': 'Bearer ' + token }
+          });
+          const data2 = await resp2.json();
+          if (data2.review) {
+            body.innerHTML += `<div class="insight" style="margin-top:12px;"><span class="insight-label">复盘</span><p style="white-space: pre-line;">${data2.review}</p></div>`;
+          }
+        } catch(e) {
+          body.innerHTML = '<p style="color: var(--text-muted);">加载失败</p>';
+        }
+      }
+    </script>
   </body>
 </html>

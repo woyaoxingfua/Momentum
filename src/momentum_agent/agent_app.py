@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import sqlite3
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from .config import DEFAULT_USER_ID, ProviderConfig, get_current_user, load_provider_config
@@ -16,6 +14,23 @@ from .planner import create_task_plan
 from .storage import TaskStore
 
 log = get_logger("agent")
+
+__all__ = [
+    "create_task_from_text",
+    "create_plan_from_text",
+    "local_advice",
+    "local_review",
+    "edit_task_from_params",
+    "postpone_task_cmd",
+    "drop_task_cmd",
+    "start_task_cmd",
+    "reopen_task_cmd",
+    "get_user_config_cmd",
+    "set_user_config_cmd",
+    "run_agent_message",
+    "run_agent_message_stream",
+    "provider_status",
+]
 
 
 def _parsed_to_message(parsed: ParsedTask, store: TaskStore, *, user_id: str = DEFAULT_USER_ID) -> str:
@@ -33,64 +48,24 @@ def _parsed_to_message(parsed: ParsedTask, store: TaskStore, *, user_id: str = D
     return f"已创建任务 #{task.id}：{task.title}{due}{recurrence_label}"
 
 
-async def _parse_task_with_ai_and_images(text: str, images: list[str], provider: ProviderConfig) -> ParsedTask:
-    """使用视觉模型从图片中提取任务"""
-    from agents import Agent, OpenAIChatCompletionsModel, Runner
-    
-    openai_client = build_openai_client(provider)
-    agent = Agent(
-        name="Task Extractor from Images",
-        instructions="""
-你是一个任务提取专家。请仔细分析用户提供的图片，提取其中的任务信息。
-
-任务提取规则：
-1. title：从图片中识别出要完成的任务或待办事项
-2. due_at：如果图片中包含日期或时间信息，解析为 ISO 8601 格式（YYYY-MM-DDTHH:MM:SS）
-3. priority：如果图片中标注了紧急/重要/优先等关键词，设置为 "high"
-4. estimated_minutes：如果图片中标注了时间，转换为分钟数
-5. notes：记录图片中的额外信息（如来源、背景等）
-6. 如果图片中没有明确的任务，从图片内容推断一个合理的任务
-
-请用中文理解和输出。
-""",
-        model=OpenAIChatCompletionsModel(model=provider.model, openai_client=openai_client),
-        output_type=ParsedTask,
-    )
-    
-    # 构建消息内容
-    content = []
-    if text:
-        content.append({"type": "text", "text": text})
-    for img_base64 in images:
-        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}})
-    
-    result = await Runner.run(agent, [{"role": "user", "content": content}])
-    return result.final_output_as(ParsedTask)
-
-
 def create_task_from_text(store: TaskStore, text: str, *, user_id: str = DEFAULT_USER_ID, images: list[str] | None = None) -> str:
     log.info("create_task_from_text user=%r text=%r has_images=%s", user_id, text[:80] if text else "", bool(images))
     user_config = store.get_all_memory(user_id=user_id)
     provider = load_provider_config(user_config)
-    
     vision_enabled = user_config.get("vision_enabled", "false") == "true"
-    
-    # 如果有图片，检查用户是否启用了视觉功能
+
     if images and provider.is_configured:
-        if vision_enabled:
-            try:
-                parsed = asyncio.run(_parse_task_with_ai_and_images(text, images, provider))
-                return _parsed_to_message(parsed, store, user_id=user_id)
-            except Exception as exc:
-                log.warning("AI vision parse failed, falling back to regex: %s", exc)
-                if not text:
-                    return "抱歉，AI 识别图片失败了。请手动输入任务内容。"
-                parsed = parse_task_text(text)
-        else:
-            log.warning("Vision not enabled by user, skipping image processing")
+        if not vision_enabled:
             return "抱歉，您当前未启用视觉功能。请在偏好设置中开启「启用视觉功能」选项后再上传图片。"
-    
-    if provider.is_configured:
+        try:
+            parsed = asyncio.run(_parse_task_with_ai(text, provider, images=images))
+            return _parsed_to_message(parsed, store, user_id=user_id)
+        except Exception as exc:
+            log.warning("AI vision parse failed, falling back to regex: %s", exc)
+            if not text:
+                return "抱歉，AI 识别图片失败了。请手动输入任务内容。"
+            parsed = parse_task_text(text)
+    elif provider.is_configured:
         try:
             parsed = asyncio.run(_parse_task_with_ai(text, provider))
         except Exception as exc:
@@ -169,26 +144,45 @@ async def _plan_task_with_ai(
     return f"已规划任务 #{parent.id}：{parent.title}。子任务：{child_lines}"
 
 
-async def _parse_task_with_ai(text: str, provider: ProviderConfig) -> ParsedTask:
+async def _parse_task_with_ai(
+    text: str, provider: ProviderConfig, *, images: list[str] | None = None
+) -> ParsedTask:
+    """Unified AI task parser — handles text-only and multimodal (text + images)."""
     from agents import Agent, OpenAIChatCompletionsModel, Runner
 
     openai_client = build_openai_client(provider)
-    agent = Agent(
-        name="Task Parser",
-        instructions="""
-You are a precise task parser. Extract structured task information from the user's natural language input.
+
+    instructions = """
+You are a precise task parser. Extract structured task information from the user's input.
 
 Rules:
 1. title: Remove date words (今天/明天/后天/下周), time words (上午/中午/下午/晚上), priority words (紧急/重要/尽快/必须/马上/有空/不急/随便), and conversational prefixes (帮我/记一下/提醒我/我想/需要/安排/规划/计划/拆分). Keep the core action.
-2. due_at: Parse relative dates (今天→today, 明天→tomorrow, 后天→day after tomorrow, 下周→next Monday) into ISO 8601. Default to 18:00 if no time specified. 上午→10:00, 中午→12:00, 下午→15:00, 晚上→20:00. Return null if no deadline.
+2. due_at: Parse relative dates into ISO 8601. Default to 18:00 if no time specified. Return null if no deadline.
 3. priority: "high" for 紧急/重要/必须/马上/尽快. "low" for 有空/不急/随便. Otherwise "medium".
 4. estimated_minutes: explicit "N分钟" or "N小时" → convert to minutes. Heuristic: 整理/准备/研究/写 → 45. Return null if unclear.
 5. notes: Any extra context not captured above, or null.
-""",
+6. When images are provided, extract task information from them (dates, priorities, action items).
+"""
+    if images:
+        instructions += "\nAnalyze the provided images carefully and extract task information from visual content."
+
+    agent = Agent(
+        name="Task Parser",
+        instructions=instructions,
         model=OpenAIChatCompletionsModel(model=provider.model, openai_client=openai_client),
         output_type=ParsedTaskOutput,
     )
-    result = await Runner.run(agent, text)
+
+    if images:
+        content = []
+        if text:
+            content.append({"type": "text", "text": text})
+        for img_base64 in images:
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}})
+        result = await Runner.run(agent, [{"role": "user", "content": content}])
+    else:
+        result = await Runner.run(agent, text)
+
     output = result.final_output_as(ParsedTaskOutput)
     due_at = datetime.fromisoformat(output.due_at) if output.due_at else None
     recurrence = None
@@ -324,244 +318,6 @@ def set_user_config_cmd(store: TaskStore, key: str, value: str, *, user_id: str 
 # ═══════════════════════════════════════════════════════════════════
 
 
-def _make_tools(store: TaskStore, *, user_id: str = DEFAULT_USER_ID):
-    """Create the full function_tool set for SDK agents, bound to a specific user."""
-    from agents import function_tool
-
-    def _to_json(payload: object) -> str:
-        return json.dumps(payload, ensure_ascii=False)
-
-    @function_tool
-    def create_task(title: str, due_at: str | None = None, priority: str = "medium", notes: str | None = None) -> str:
-        """Create a task in the local todo database."""
-        parsed = parse_task_text(f"{due_at or ''} {title}")
-        chosen_priority = Priority(priority) if priority in Priority._value2member_map_ else parsed.priority
-        task = store.create_task(
-            title,
-            due_at=parsed.due_at,
-            priority=chosen_priority,
-            estimated_minutes=parsed.estimated_minutes,
-            notes=notes,
-            user_id=user_id,
-        )
-        log.info("agent tool create_task: #%d user=%r", task.id, user_id)
-        due_info = f"，截止 {task.due_at.strftime('%Y-%m-%d %H:%M')}" if task.due_at else ""
-        rec_info = {"daily": "（每天重复）", "weekly": "（每周重复）", "monthly": "（每月重复）"}.get(task.recurrence or "", "")
-        return f"已创建任务 #{task.id}：{task.title}{due_info}{rec_info}"
-
-    @function_tool
-    def create_plan(text: str) -> str:
-        """Create a parent task and practical subtasks from a larger goal."""
-        return create_plan_from_text(store, text, user_id=user_id)
-
-    @function_tool
-    def list_tasks(status: str = "todo") -> str:
-        """List tasks by status (JSON string). Status: todo, doing, done, dropped, or 'all'."""
-        if status == "all":
-            tasks = store.list_tasks(status=None, user_id=user_id)
-        else:
-            chosen = TaskStatus(status) if status in TaskStatus._value2member_map_ else TaskStatus.TODO
-            tasks = store.list_tasks(chosen, user_id=user_id)
-        payload = [
-            {"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority.value,
-             "due_at": t.due_at.isoformat() if t.due_at else None,
-             "estimated_minutes": t.estimated_minutes,
-             "parent_task_id": t.parent_task_id, "recurrence": t.recurrence}
-            for t in tasks
-        ]
-        return _to_json(payload)
-
-    @function_tool
-    def get_overview() -> str:
-        """Get a task overview as JSON: counts, overdue, due-soon, top-3 todos."""
-        all_tasks = store.list_tasks(status=None, user_id=user_id)
-        now = datetime.now().astimezone()
-        counts = {"todo": 0, "doing": 0, "done": 0, "dropped": 0}
-        overdue = 0
-        due_soon = 0
-        for t in all_tasks:
-            counts[t.status.value] = counts.get(t.status.value, 0) + 1
-            if t.status in (TaskStatus.TODO, TaskStatus.DOING) and t.due_at:
-                if t.due_at < now:
-                    overdue += 1
-                elif t.due_at < now + timedelta(days=2):
-                    due_soon += 1
-        payload = {
-            "total": len(all_tasks),
-            "by_status": counts,
-            "overdue": overdue,
-            "due_within_48h": due_soon,
-            "top_3_todo": [
-                {"id": t.id, "title": t.title, "priority": t.priority.value,
-                 "due_at": t.due_at.isoformat() if t.due_at else None}
-                for t in all_tasks if t.status == TaskStatus.TODO
-            ][:3],
-        }
-        return _to_json(payload)
-
-    @function_tool
-    def edit_task(task_id: int, title: str | None = None, due_at: str | None = None,
-                  priority: str | None = None, estimated_minutes: int | None = None,
-                  notes: str | None = None) -> str:
-        """Edit a task's fields. Pass only the fields you want to change. due_at in ISO format."""
-        parsed_due = datetime.fromisoformat(due_at) if due_at else None
-        parsed_pri = Priority(priority) if priority and priority in Priority._value2member_map_ else None
-        task = store.update_task(task_id, title=title, due_at=parsed_due,
-                                 priority=parsed_pri, estimated_minutes=estimated_minutes,
-                                 notes=notes, user_id=user_id)
-        if not task:
-            return f"任务 #{task_id} 不存在或不属于你"
-        due = f"，截止 {task.due_at.strftime('%Y-%m-%d %H:%M')}" if task.due_at else ""
-        return f"已更新任务 #{task.id}：{task.title}{due}"
-
-    @function_tool
-    def get_daily_review() -> str:
-        """Get a concise daily review of open task risk and recommended focus."""
-        return local_review(store, user_id=user_id)
-
-    @function_tool
-    def get_user_context() -> str:
-        """Get current workload/energy/available time as JSON."""
-        prefs = _read_preferences(store, user_id=user_id)
-        context = build_user_context(store.list_tasks(TaskStatus.TODO, user_id=user_id), **prefs)
-        payload = {
-            "now": context.now.isoformat(),
-            "energy": context.energy,
-            "available_minutes_today": context.available_minutes_today,
-            "recent_pattern": context.recent_pattern,
-            "local_advice": choose_next_action(store.list_tasks(TaskStatus.TODO, user_id=user_id), context),
-        }
-        return _to_json(payload)
-
-    @function_tool
-    def complete_task(task_id: int) -> str:
-        """Mark a task as done by its ID. Handles recurring tasks automatically.
-        Only works on tasks belonging to the current user."""
-        task = store._get_task(task_id)
-        if not task:
-            return f"task #{task_id} not found"
-        if task.user_id != user_id:
-            return f"task #{task_id} does not belong to you"
-        next_task = store.complete_recurring_task(task_id)
-        if not next_task:
-            return f"任务 #{task_id} 不存在或不属于你"
-        if next_task.recurrence:
-            return f"已完成 #{task_id}：{next_task.title}，已自动创建下一期任务 #{next_task.id}"
-        return f"已完成 #{task_id}：{next_task.title}"
-
-    @function_tool
-    def start_task(task_id: int) -> str:
-        """Mark a task as in-progress by its ID. Only on current user's tasks."""
-        task = store.start_task(task_id, user_id=user_id)
-        if not task:
-            return f"任务 #{task_id} 不存在或不属于你"
-        return f"已开始 #{task.id}：{task.title}"
-
-    @function_tool
-    def drop_task(task_id: int) -> str:
-        """Drop/abandon a task by its ID. Only on current user's tasks."""
-        task = store.drop_task(task_id, user_id=user_id)
-        if not task:
-            return f"任务 #{task_id} 不存在或不属于你"
-        return f"已放弃 #{task.id}：{task.title}"
-
-    @function_tool
-    def postpone_task(task_id: int, days: int = 3) -> str:
-        """Postpone a task by N days. Only on current user's tasks."""
-        task = store.postpone_task(task_id, days, user_id=user_id)
-        if not task:
-            return f"任务 #{task_id} 不存在或不属于你"
-        new_due = task.due_at.strftime("%Y-%m-%d") if task.due_at else "无截止"
-        return f"已推迟 #{task.id}：{task.title} → {new_due}"
-
-    @function_tool
-    def search_tasks(query: str) -> str:
-        """Search tasks by keyword in title (JSON string)."""
-        payload = [
-            {"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority.value,
-             "due_at": t.due_at.isoformat() if t.due_at else None}
-            for t in store.search_tasks(query, user_id=user_id)
-        ]
-        return _to_json(payload)
-
-    @function_tool
-    def save_note(content: str) -> str:
-        """Save a personal note/observation for future reference. Use this to remember user preferences,
-        important context, or decisions that should persist across conversations."""
-        store.set_memory(f"agent_note_{int(datetime.now().timestamp())}", content, user_id=user_id)
-        return f"note saved: {content[:80]}"
-
-    @function_tool
-    def get_my_notes() -> str:
-        """Retrieve all notes you've saved about this user (JSON string)."""
-        all_mem = store.get_all_memory(user_id=user_id)
-        payload = {k: v for k, v in all_mem.items() if k.startswith("agent_note_")}
-        return _to_json(payload)
-
-    # ── v1 新增：标签 & 批量操作工具 ──────────────────────────────────
-
-    @function_tool
-    def get_all_tags() -> str:
-        """Get all tags used across user's tasks (JSON array string)."""
-        tags = store.get_all_tags(user_id=user_id)
-        return _to_json(tags)
-
-    @function_tool
-    def get_tasks_by_tag(tag: str) -> str:
-        """Get all tasks with a specific tag (JSON string)."""
-        tasks = store.get_tasks_by_tag(tag, user_id=user_id)
-        payload = [
-            {"id": t.id, "title": t.title, "status": t.status.value,
-             "priority": t.priority.value,
-             "due_at": t.due_at.isoformat() if t.due_at else None,
-             "tags": t.tags}
-            for t in tasks
-        ]
-        return _to_json(payload)
-
-    @function_tool
-    def add_tags_to_task(task_id: int, tags: list[str]) -> str:
-        """Add one or more tags to a task. Existing tags are preserved."""
-        task = store._get_task(task_id)
-        if not task or (task.user_id and task.user_id != user_id):
-            return f"任务 #{task_id} 不存在或不属于你"
-        existing_tags = task.tags or []
-        all_tags = list(set(existing_tags + tags))
-        updated = store.update_task(task_id, tags=all_tags, user_id=user_id)
-        if not updated:
-            return f"更新任务 #{task_id} 失败"
-        tags_info = f"，标签：{', '.join(updated.tags)}" if updated.tags else ""
-        return f"已更新任务 #{updated.id}：{updated.title}{tags_info}"
-
-    @function_tool
-    def batch_complete_tasks(task_ids: list[int]) -> str:
-        """Mark multiple tasks as done at once. Pass a list of task IDs."""
-        count = store.batch_update_status(task_ids, TaskStatus.DONE, user_id=user_id)
-        return f"已批量完成 {count} 个任务"
-
-    @function_tool
-    def batch_start_tasks(task_ids: list[int]) -> str:
-        """Mark multiple tasks as in-progress at once. Pass a list of task IDs."""
-        count = store.batch_update_status(task_ids, TaskStatus.DOING, user_id=user_id)
-        return f"已批量开始 {count} 个任务"
-
-    return [
-        create_task, create_plan, list_tasks, get_overview, get_daily_review, get_user_context,
-        complete_task, start_task, drop_task, postpone_task, search_tasks, edit_task,
-        save_note, get_my_notes,
-        # v1 新增工具
-        get_all_tags, get_tasks_by_tag, add_tags_to_task,
-        batch_complete_tasks, batch_start_tasks,
-    ]
-
-
-# SDK-native session memory — persisted in SQLite alongside tasks
-_sessions: dict[str, object] = {}
-
-
-SESSION_LIMIT: int | None = None
-SESSION_VERSION = "v6"  # 完全禁用持久化历史，仅内存中临时保存，但使用 notes 工具保存记忆
-
 
 
 
@@ -585,9 +341,10 @@ def _make_hooks():
 def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, user_id: str = DEFAULT_USER_ID):
     """Build the unified Momentum agent — single agent, all tools, SDK-native session."""
     from agents import Agent, OpenAIChatCompletionsModel
+    from .agents import create_agent_tools
 
     model = OpenAIChatCompletionsModel(model=provider.model, openai_client=openai_client)
-    tools = _make_tools(store, user_id=user_id)
+    tools = create_agent_tools(store, user_id=user_id)
     now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
 
     return Agent(

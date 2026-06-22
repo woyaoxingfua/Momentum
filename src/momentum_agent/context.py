@@ -4,6 +4,16 @@ from datetime import datetime, timedelta
 
 from .models import Task, UserContext
 
+__all__ = [
+    "build_user_context",
+    "choose_next_action",
+    "daily_review",
+    "heartbeat_suggestion",
+    "ranked_tasks",
+    "task_score",
+    "priority_rank",
+]
+
 
 def build_user_context(
     tasks: list[Task],

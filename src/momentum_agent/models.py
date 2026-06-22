@@ -6,6 +6,21 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+__all__ = [
+    "TaskStatus",
+    "Priority",
+    "TaskRelationType",
+    "TaskRelation",
+    "Task",
+    "UserContext",
+    "ParsedTaskOutput",
+    "SubtaskItem",
+    "PlanOutput",
+    "TaskRelationInput",
+    "BulkSubtaskInput",
+    "TaskWithRelationsOutput",
+]
+
 
 class TaskStatus(StrEnum):
     TODO = "todo"

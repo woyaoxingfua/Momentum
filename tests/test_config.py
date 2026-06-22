@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from momentum_agent.config import DEFAULT_MODEL, load_provider_config
 
 
@@ -17,7 +19,8 @@ def test_provider_config_uses_local_fallback_without_key(monkeypatch) -> None:
     ):
         monkeypatch.delenv(name, raising=False)
 
-    config = load_provider_config()
+    with patch("momentum_agent.config.load_dotenv"):
+        config = load_provider_config()
 
     assert config.api_key is None
     assert config.base_url is None

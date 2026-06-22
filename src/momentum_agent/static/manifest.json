@@ -1,0 +1,22 @@
+{
+  "name": "Momentum Task Agent",
+  "short_name": "Momentum",
+  "description": "AI 驱动的智能任务管理助手",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f9fa",
+  "theme_color": "#20c997",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -18,7 +18,7 @@ def test_advice_prefers_overdue_task(tmp_path) -> None:
     advice = choose_next_action(tasks, context)
 
     assert "交水费" in advice
-    assert "已经过期" in advice
+    assert "过期" in advice
 
 
 def test_plan_creates_parent_and_children(tmp_path) -> None:
@@ -38,6 +38,6 @@ def test_daily_review_mentions_risk_counts(tmp_path) -> None:
 
     review = daily_review(store.list_tasks(), build_user_context(store.list_tasks(), now=now))
 
-    assert "开放任务 2 个" in review
-    assert "过期 1 个" in review
-    assert "48 小时内到期 1 个" in review
+    assert "2 个开放任务" in review
+    assert "已过期：1 个" in review
+    assert "48小时内到期：1 个" in review

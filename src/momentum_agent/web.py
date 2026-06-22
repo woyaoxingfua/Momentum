@@ -877,9 +877,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
             value = json.loads(raw)
         except json.JSONDecodeError:
             return {}
-        result = value if isinstance(value, dict) else {}
-        self._cached_body = result
-        return result
+        return value if isinstance(value, dict) else {}
 
     def send_static(self, filename: str, content_type: str) -> None:
         static_file = files("momentum_agent").joinpath("static", filename)
