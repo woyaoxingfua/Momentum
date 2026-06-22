@@ -6,7 +6,7 @@ AI 驱动的智能任务管理助手。不是又一个 Todoist —— 它会学�
 
 **行为学习引擎** — 从 `task_events` 表中挖掘你的完成率、预估准确率、高效时段、倦怠风险，给出真正的个性化建议。
 
-在线体验:https://myfirst.cc.cd
+在线体验:http://myfirst.cc.cd    （ssl证书未正确配置无法使用https协议）
 
 ## 功能
 
