@@ -3,35 +3,37 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#20c997" />
+    <meta name="theme-color" content="#fafafa" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>Momentum</title>
     <link rel="stylesheet" href="/app.css" />
     <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
   </head>
   <body>
     <main class="shell">
+      <!-- Left: Workbench -->
       <section class="workbench" aria-label="任务工作台">
         <header class="topbar">
-          <div>
+          <div class="topbar-brand">
             <p class="eyebrow">Momentum</p>
             <h1>任务助手</h1>
           </div>
           <div class="topbar-right">
             <span class="muted" id="currentUser"></span>
             <div class="status-pill" id="taskCount">0 个待办</div>
-            <button id="logoutButton" title="登出">退出</button>
+            <button id="logoutButton">退出</button>
           </div>
         </header>
 
         <section class="composer" aria-label="创建任务">
           <div id="imagePreview" class="image-preview" style="display: none;"></div>
-          <textarea id="taskInput" rows="3" placeholder="例如：明天下午整理产品经理面试材料&#10;也可以上传图片，让 AI 从中提取任务"></textarea>
+          <textarea id="taskInput" rows="3" placeholder="写下想推进的事，按 Ctrl+Enter 快速添加&#10;也可以上传图片，让 AI 识别任务"></textarea>
           <div class="composer-actions">
             <label id="imageUploadLabel" class="image-upload-label" title="上传图片">
               <input id="imageUpload" type="file" accept="image/*" multiple hidden />
-              <span>📷</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>
             </label>
             <button id="addTaskButton" class="primary">新增任务</button>
             <button id="planTaskButton">拆成计划</button>
@@ -47,68 +49,76 @@
 
         <section class="heartbeat" id="heartbeatSection" aria-live="polite" style="display: none;">
           <div class="heartbeat-header">
-            <span class="heartbeat-icon">💡</span>
-            <span class="insight-label">主动提醒</span>
+            <span class="heartbeat-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            </span>
+            <span class="insight-label heartbeat-label">主动提醒</span>
           </div>
           <p id="heartbeatText"></p>
           <div class="heartbeat-actions">
-            <button id="heartbeatDismiss" class="text-button">稍后提醒</button>
+            <button id="heartbeatDismiss" class="ghost">稍后提醒</button>
           </div>
         </section>
 
         <section class="task-list" aria-label="任务列表">
           <div class="section-heading">
-            <div class="status-tabs">
-              <button class="status-tab active" data-status="todo">待办</button>
-              <button class="status-tab" data-status="doing">进行中</button>
-              <button class="status-tab" data-status="done">已完成</button>
-              <button class="status-tab" data-status="dropped">已放弃</button>
+            <div class="status-tabs" role="tablist">
+              <button class="status-tab active" data-status="todo" role="tab" aria-selected="true">待办</button>
+              <button class="status-tab" data-status="doing" role="tab" aria-selected="false">进行中</button>
+              <button class="status-tab" data-status="done" role="tab" aria-selected="false">已完成</button>
+              <button class="status-tab" data-status="dropped" role="tab" aria-selected="false">已放弃</button>
             </div>
             <div class="heading-actions">
-              <input id="searchInput" placeholder="搜索任务..." class="search-input" />
-              <button id="refreshButton" title="刷新">刷新</button>
-              <button id="exportButton" title="导出数据">导出</button>
+              <input id="searchInput" placeholder="搜索任务..." class="search-input" aria-label="搜索任务" />
+              <button id="refreshButton" class="ghost" title="刷新">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23,4 23,10 17,10"/><polyline points="1,20 1,14 7,14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
+              <button id="exportButton" class="ghost" title="导出数据">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </button>
               <label class="import-label" title="导入数据">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 导入
                 <input id="importFile" type="file" accept=".json" hidden />
               </label>
             </div>
           </div>
-          <div id="tasks" class="tasks"></div>
+          <div id="tasks" class="tasks" role="list"></div>
         </section>
       </section>
 
+      <!-- Right: Coach -->
       <aside class="coach" aria-label="Agent 对话">
         <div class="coach-header">
           <div class="section-heading">
             <h2>Agent</h2>
-            <span class="muted" id="providerStatus">读取服务商...</span>
+            <span class="muted" id="providerStatus">读取中...</span>
           </div>
         </div>
-        <div id="chatLog" class="chat-log"></div>
-        <form id="chatForm" class="chat-form">
-          <input id="chatInput" placeholder="让助手帮你拆分、安排或复盘" />
+        <div id="chatLog" class="chat-log" role="log" aria-live="polite"></div>
+        <form id="chatForm" class="chat-form" aria-label="发送消息">
+          <input id="chatInput" placeholder="让助手帮你拆分、安排或复盘" autocomplete="off" />
           <button class="primary" type="submit">发送</button>
         </form>
         <details class="config-panel">
           <summary>偏好设置</summary>
           <div class="config-form">
-            <h4 style="margin: 0 0 12px; font-size: 14px;">AI 配置</h4>
+            <h4 class="config-section-title">AI 配置</h4>
             <label>API Key
               <input id="configApiKey" type="password" placeholder="sk-... 留空使用本地 fallback" />
             </label>
             <label>API 基础地址
-              <input id="configApiBase" type="text" placeholder="https://api.openai.com/v1 或第三方兼容地址" />
+              <input id="configApiBase" type="text" placeholder="https://api.openai.com/v1" />
             </label>
             <label>模型名称
-              <input id="configModel" type="text" placeholder="如：gpt-4o、claude-3-opus、deepseek-chat 等" />
+              <input id="configModel" type="text" placeholder="gpt-4o、claude-3-opus、deepseek-chat" />
             </label>
-            <label class="checkbox-label" style="margin-top: 8px;">
+            <label class="checkbox-label">
               <input id="configVisionEnabled" type="checkbox" />
               启用视觉功能（上传图片识别任务）
             </label>
             <div class="config-divider"></div>
-            <h4 style="margin: 0 0 12px; font-size: 14px;">工作配置</h4>
+            <h4 class="config-section-title">工作配置</h4>
             <label>每日可用时间（分钟）
               <input id="configCapacity" type="number" min="0" max="480" placeholder="45" />
             </label>
@@ -132,67 +142,73 @@
             <label>提醒间隔（小时）
               <input id="configHeartbeatInterval" type="number" min="1" max="24" value="4" />
             </label>
-            <button id="configSaveButton" class="primary">保存</button>
+            <button id="configSaveButton" class="primary">保存设置</button>
           </div>
         </details>
       </aside>
     </main>
 
     <!-- Mobile Bottom Nav -->
-    <nav class="mobile-nav">
+    <nav class="mobile-nav" aria-label="移动端导航">
       <div class="mobile-nav-items">
-        <button class="mobile-nav-item active" data-panel="tasks">
-          <span>📋</span>
+        <button class="mobile-nav-item active" data-panel="tasks" aria-label="任务">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           <span>任务</span>
         </button>
-        <button class="mobile-nav-item" data-panel="chat">
-          <span>🤖</span>
+        <button class="mobile-nav-item" data-panel="chat" aria-label="Agent">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
           <span>Agent</span>
         </button>
-        <button class="mobile-nav-item" data-panel="insights">
-          <span>📊</span>
+        <button class="mobile-nav-item" data-panel="insights" aria-label="洞察">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           <span>洞察</span>
         </button>
-        <button class="mobile-nav-item" data-panel="settings">
-          <span>⚙️</span>
+        <button class="mobile-nav-item" data-panel="settings" aria-label="设置">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span>设置</span>
         </button>
       </div>
     </nav>
 
     <!-- Mobile Panels -->
-    <div class="mobile-panel" id="mobileChatPanel">
+    <div class="mobile-panel" id="mobileChatPanel" aria-label="Agent 对话">
       <div class="mobile-panel-header">
         <h2>Agent</h2>
-        <button class="mobile-panel-close" onclick="closeMobilePanel()">✕</button>
+        <button class="mobile-panel-close" id="mobileChatPanelClose" aria-label="关闭">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
       <div class="mobile-panel-body">
-        <div id="mobileChatLog" class="chat-log" style="min-height: 400px; max-height: none;"></div>
-        <form id="mobileChatForm" class="chat-form" style="margin-top: 12px;">
-          <input id="mobileChatInput" placeholder="让助手帮你拆分、安排或复盘" />
+        <div id="mobileChatLog" class="chat-log"></div>
+        <form id="mobileChatForm" class="chat-form">
+          <input id="mobileChatInput" placeholder="让助手帮你拆分、安排或复盘" autocomplete="off" />
           <button class="primary" type="submit">发送</button>
         </form>
       </div>
     </div>
 
-    <div class="mobile-panel" id="mobileInsightsPanel">
+    <div class="mobile-panel" id="mobileInsightsPanel" aria-label="行为洞察">
       <div class="mobile-panel-header">
         <h2>行为洞察</h2>
-        <button class="mobile-panel-close" onclick="closeMobilePanel()">✕</button>
+        <button class="mobile-panel-close" id="mobileInsightsPanelClose" aria-label="关闭">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
       <div class="mobile-panel-body" id="mobileInsightsBody">
-        <p style="color: var(--text-muted);">加载中...</p>
+        <p class="muted">加载中...</p>
       </div>
     </div>
 
-    <div class="mobile-panel" id="mobileSettingsPanel">
+    <div class="mobile-panel" id="mobileSettingsPanel" aria-label="设置">
       <div class="mobile-panel-header">
         <h2>设置</h2>
-        <button class="mobile-panel-close" onclick="closeMobilePanel()">✕</button>
+        <button class="mobile-panel-close" id="mobileSettingsPanelClose" aria-label="关闭">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
       <div class="mobile-panel-body">
         <div class="config-form" id="mobileConfigForm">
-          <h4 style="margin: 0 0 12px; font-size: 14px;">AI 配置</h4>
+          <h4 class="config-section-title">AI 配置</h4>
           <label>API Key
             <input id="mobileConfigApiKey" type="password" placeholder="sk-..." />
           </label>
@@ -202,12 +218,12 @@
           <label>模型名称
             <input id="mobileConfigModel" type="text" placeholder="如：gpt-4o、deepseek-chat" />
           </label>
-          <label class="checkbox-label" style="margin-top: 8px;">
+          <label class="checkbox-label">
             <input id="mobileConfigVisionEnabled" type="checkbox" />
             启用视觉功能
           </label>
           <div class="config-divider"></div>
-          <h4 style="margin: 0 0 12px; font-size: 14px;">工作配置</h4>
+          <h4 class="config-section-title">工作配置</h4>
           <label>每日可用时间（分钟）
             <input id="mobileConfigCapacity" type="number" min="0" max="480" placeholder="45" />
           </label>
@@ -222,7 +238,7 @@
             <input id="mobileConfigHeartbeatEnabled" type="checkbox" />
             启用主动提醒
           </label>
-          <button id="mobileConfigSaveButton" class="primary" style="margin-top: 12px;">保存设置</button>
+          <button id="mobileConfigSaveButton" class="primary">保存设置</button>
         </div>
       </div>
     </div>
@@ -245,8 +261,8 @@
         <label>标签（逗号分隔） <input id="editTags" placeholder="例如：工作, 紧急, 个人" /></label>
         <label>备注 <input id="editNotes" /></label>
         <div class="edit-actions">
-          <button type="submit" class="primary">保存</button>
           <button type="button" id="editCancelButton">取消</button>
+          <button type="submit" class="primary">保存</button>
         </div>
       </form>
     </dialog>
@@ -266,8 +282,8 @@
         </label>
         <label>预估时间（分钟）<input id="addSubtaskEstimate" type="number" min="1" max="480" /></label>
         <div class="edit-actions">
-          <button type="submit" class="primary">添加</button>
           <button type="button" id="addSubtaskCancelButton">取消</button>
+          <button type="submit" class="primary">添加</button>
         </div>
       </form>
     </dialog>
@@ -284,69 +300,12 @@
           <button type="button" class="postpone-option" data-days="30">1 个月</button>
         </div>
         <div class="edit-actions">
-          <button type="submit" class="primary">确定推迟</button>
           <button type="button" id="postponeCancelButton">取消</button>
+          <button type="submit" class="primary">确定推迟</button>
         </div>
       </form>
     </dialog>
 
     <script type="module" src="/js/app.js"></script>
-    <script>
-      // Mobile navigation
-      function closeMobilePanel() {
-        document.querySelectorAll('.mobile-panel').forEach(p => p.classList.remove('open'));
-        document.querySelectorAll('.mobile-nav-item').forEach(b => b.classList.remove('active'));
-        document.querySelector('.mobile-nav-item[data-panel="tasks"]').classList.add('active');
-      }
-
-      document.querySelectorAll('.mobile-nav-item').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const panel = btn.dataset.panel;
-          document.querySelectorAll('.mobile-nav-item').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-
-          if (panel === 'tasks') {
-            closeMobilePanel();
-            return;
-          }
-
-          const panelId = {
-            chat: 'mobileChatPanel',
-            insights: 'mobileInsightsPanel',
-            settings: 'mobileSettingsPanel'
-          }[panel];
-
-          document.querySelectorAll('.mobile-panel').forEach(p => p.classList.remove('open'));
-          const el = document.getElementById(panelId);
-          if (el) {
-            el.classList.add('open');
-            // Trigger load for insights
-            if (panel === 'insights') loadMobileInsights();
-          }
-        });
-      });
-
-      async function loadMobileInsights() {
-        const body = document.getElementById('mobileInsightsBody');
-        try {
-          const token = localStorage.getItem('momentum_token');
-          const resp = await fetch('/api/advice', {
-            headers: { 'Authorization': 'Bearer ' + token }
-          });
-          const data = await resp.json();
-          body.innerHTML = `<div class="insight" style="margin-top:0;"><span class="insight-label">建议</span><p>${data.advice || '暂无建议'}</p></div>`;
-
-          const resp2 = await fetch('/api/review', {
-            headers: { 'Authorization': 'Bearer ' + token }
-          });
-          const data2 = await resp2.json();
-          if (data2.review) {
-            body.innerHTML += `<div class="insight" style="margin-top:12px;"><span class="insight-label">复盘</span><p style="white-space: pre-line;">${data2.review}</p></div>`;
-          }
-        } catch(e) {
-          body.innerHTML = '<p style="color: var(--text-muted);">加载失败</p>';
-        }
-      }
-    </script>
   </body>
 </html>

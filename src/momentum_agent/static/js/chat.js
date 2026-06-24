@@ -10,51 +10,143 @@ export function setAfterChat(fn) {
   onAfterChat = fn;
 }
 
-function renderMarkdown(text) {
-  let html = text;
+// 工具名称中文映射
+const TOOL_LABELS = {
+  create_task: "创建任务",
+  create_plan: "规划任务",
+  list_tasks: "列出任务",
+  search_tasks: "搜索任务",
+  get_task: "查询任务",
+  get_overview: "获取总览",
+  edit_task: "编辑任务",
+  complete_task: "完成任务",
+  start_task: "开始任务",
+  drop_task: "放弃任务",
+  postpone_task: "推迟任务",
+  reopen_task: "恢复任务",
+  create_subtask: "创建子任务",
+  bulk_create_subtasks: "批量创建子任务",
+  get_subtasks: "查询子任务",
+  get_task_with_subtasks: "查询任务详情",
+  add_task_dependency: "添加依赖",
+  remove_task_dependency: "移除依赖",
+  get_task_dependencies: "查询依赖",
+  is_task_blocked: "检查阻塞",
+  get_all_tags: "获取标签",
+  get_tasks_by_tag: "按标签查询",
+  add_tags_to_task: "添加标签",
+  batch_complete_tasks: "批量完成",
+  batch_start_tasks: "批量开始",
+  save_note: "保存笔记",
+  get_my_notes: "查看笔记",
+  get_user_context: "获取上下文",
+  get_daily_review: "每日回顾",
+  get_system_status: "系统状态",
+  generate_suggestion: "生成建议",
+  get_daily_summary: "每日摘要",
+  check_in: "签到",
+  get_completion_stats: "完成统计",
+  get_behavioral_profile: "行为画像",
+  get_insights: "行为洞察",
+  get_strategic_summary: "战略摘要",
+  estimate_task_smart: "智能预估",
+  get_next_best_task: "推荐任务",
+  get_tasks_due_today: "今日任务",
+  get_tasks_due_this_week: "本周任务",
+  get_overdue_tasks: "逾期任务",
+  get_doing_tasks: "进行中任务",
+  get_current_weather: "查询天气",
+  plan_outdoor_activity: "规划活动",
+  set_user_location: "设置位置",
+  get_user_location: "获取位置",
+  get_location_info: "位置信息",
+};
 
-  // code blocks (before inline)
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, "<pre><code>$2</code></pre>");
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderMarkdown(text) {
+  if (!text) return "";
+
+  // 保护未闭合的 markdown 标签 - 使用占位符
+  // 这样可以先渲染 HTML，然后再恢复未闭合的标签
+  const placeholders = [];
+  let idx = 0;
+
+  // 替换未闭合的 **...** (bold)
+  let result = text.replace(/\*\*(.+?)(\*\*)?/g, (match, content, closing) => {
+    if (closing) return match; // 已闭合，保留原样
+    const ph = `\x00PH${idx++}\x00`;
+    placeholders.push({ ph, html: `<strong>${escapeHtml(content)}</strong>` });
+    return ph;
+  });
+
+  // 替换未闭合的 *...* (italic)
+  result = result.replace(/\*(.+?)(\*)?/g, (match, content, closing) => {
+    if (closing) return match; // 已闭合，保留原样
+    const ph = `\x00PH${idx++}\x00`;
+    placeholders.push({ ph, html: `<em>${escapeHtml(content)}</em>` });
+    return ph;
+  });
+
+  // 替换未闭合的 `...` (inline code)
+  result = result.replace(/`([^`]+)(`)?/g, (match, content, closing) => {
+    if (closing) return match;
+    const ph = `\x00PH${idx++}\x00`;
+    placeholders.push({ ph, html: `<code>${escapeHtml(content)}</code>` });
+    return ph;
+  });
+
+  // 转义 HTML
+  result = escapeHtml(result);
+
+  // 恢复占位符（未闭合的 markdown 标签）
+  for (const { ph, html } of placeholders) {
+    result = result.replace(ph, html);
+  }
+
+  // code blocks (完整格式)
+  result = result.replace(/```(\w*)\n([\s\S]*?)```/g, "<pre><code>$2</code></pre>");
 
   // inline code
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-  // bold and italic
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
-  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
 
   // headers
-  html = html.replace(/^### (.+)$/gm, "<h4>$1</h4>");
-  html = html.replace(/^## (.+)$/gm, "<h3>$1</h3>");
-  html = html.replace(/^# (.+)$/gm, "<h2>$1</h2>");
+  result = result.replace(/^### (.+)$/gm, "<h4>$1</h4>");
+  result = result.replace(/^## (.+)$/gm, "<h3>$1</h3>");
+  result = result.replace(/^# (.+)$/gm, "<h2>$1</h2>");
 
   // unordered lists
-  html = html.replace(/^[\s]*[-*+] (.+)$/gm, "<li>$1</li>");
-  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
+  result = result.replace(/^[\s]*[-*+] (.+)$/gm, "<li>$1</li>");
+  result = result.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
 
   // ordered lists
-  html = html.replace(/^[\s]*\d+\. (.+)$/gm, "<li>$1</li>");
+  result = result.replace(/^[\s]*\d+\. (.+)$/gm, "<li>$1</li>");
 
   // links and images
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" />');
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a target="_blank" href="$2">$1</a>');
+  result = result.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" />');
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a target="_blank" href="$2">$1</a>');
 
   // blockquote
-  html = html.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
+  result = result.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
 
   // horizontal rule
-  html = html.replace(/^---$/gm, "<hr>");
+  result = result.replace(/^---$/gm, "<hr>");
 
   // paragraphs: double newlines
-  html = html.replace(/\n\n+/g, "</p><p>");
-  html = "<p>" + html + "</p>";
+  result = result.replace(/\n\n+/g, "</p><p>");
+  result = "<p>" + result + "</p>";
 
   // clean up empty paragraphs and whitespace
-  html = html.replace(/<p>\s*<\/p>/g, "");
-  html = html.replace(/\n/g, "<br>");
+  result = result.replace(/<p>\s*<\/p>/g, "");
+  result = result.replace(/\n/g, "<br>");
 
-  return html;
+  return result;
 }
 
 function addMessage(role, text) {
@@ -64,6 +156,81 @@ function addMessage(role, text) {
   chatLog.appendChild(item);
   chatLog.scrollTop = chatLog.scrollHeight;
   return item;
+}
+
+// 创建工具指示器元素
+function createToolIndicator(toolName) {
+  const label = TOOL_LABELS[toolName] || toolName;
+  const indicator = document.createElement("div");
+  indicator.className = "tool-indicator";
+  indicator.innerHTML = `<span class="tool-spinner"></span> ${label}…`;
+  return indicator;
+}
+
+async function handleStreamResponse(response, agentItem) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+  let toolIndicator = null;
+
+  // 流式渲染：收到每个 chunk 都立即渲染（体验更好）
+  // 但 markdown 解析器需要能处理不完整的格式
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        try {
+          const event = JSON.parse(line.slice(6));
+
+          if (event.type === "tool_start") {
+            // 显示工具调用指示器
+            if (toolIndicator) toolIndicator.remove();
+            toolIndicator = createToolIndicator(event.name);
+            agentItem.appendChild(toolIndicator);
+            chatLog.scrollTop = chatLog.scrollHeight;
+          } else if (event.type === "tool_end") {
+            // 移除工具指示器
+            if (toolIndicator) {
+              toolIndicator.remove();
+              toolIndicator = null;
+            }
+          } else if (event.type === "chunk") {
+            fullText += event.text;
+            // 移除工具指示器（如果有文本输出）
+            if (toolIndicator) {
+              toolIndicator.remove();
+              toolIndicator = null;
+            }
+            // 流式渲染：立即更新显示
+            agentItem.innerHTML = renderMarkdown(fullText || "…");
+            chatLog.scrollTop = chatLog.scrollHeight;
+          } else if (event.type === "error") {
+            fullText = event.message || "出错了";
+            agentItem.innerHTML = renderMarkdown(fullText);
+          } else if (event.type === "done") {
+            // 流结束
+            if (toolIndicator) {
+              toolIndicator.remove();
+              toolIndicator = null;
+            }
+            if (!fullText) {
+              agentItem.innerHTML = renderMarkdown("…");
+            }
+          }
+        } catch {
+          // skip malformed lines
+        }
+      }
+    }
+  }
 }
 
 export async function sendChat(event) {
@@ -97,36 +264,7 @@ export async function sendChat(event) {
       return;
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let fullText = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const parsed = JSON.parse(line.slice(6));
-            if (parsed.error) {
-              fullText = parsed.error;
-            } else if (parsed.chunk) {
-              fullText += parsed.chunk;
-            }
-            agentItem.innerHTML = renderMarkdown(fullText || "…");
-            chatLog.scrollTop = chatLog.scrollHeight;
-          } catch {
-            // skip malformed lines
-          }
-        }
-      }
-    }
+    await handleStreamResponse(response, agentItem);
   } catch (err) {
     agentItem.textContent = `连接失败：${err.message}`;
   }
@@ -161,36 +299,7 @@ export async function sendToAgent(message) {
       return;
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let fullText = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const parsed = JSON.parse(line.slice(6));
-            if (parsed.error) {
-              fullText = parsed.error;
-            } else if (parsed.chunk) {
-              fullText += parsed.chunk;
-            }
-            agentItem.innerHTML = renderMarkdown(fullText || "…");
-            chatLog.scrollTop = chatLog.scrollHeight;
-          } catch {
-            // skip malformed lines
-          }
-        }
-      }
-    }
+    await handleStreamResponse(response, agentItem);
   } catch (err) {
     agentItem.textContent = `连接失败：${err.message}`;
   }

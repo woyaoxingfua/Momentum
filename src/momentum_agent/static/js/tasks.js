@@ -33,31 +33,41 @@ export function renderTasks(tasks, isSearchResult = false) {
 
   const ordered = orderTasks(tasks);
   els.tasks.innerHTML = ordered
-    .map((task) => renderTaskCard(task))
+    .map((task, i) => renderTaskCard(task, i))
     .join("");
 
   bindTaskButtons();
 }
 
-function renderTaskCard(task) {
+function renderTaskCard(task, index) {
+  const isDone = task.status === "done";
+  const isDropped = task.status === "dropped";
+  const checkboxClass = isDone ? "task-checkbox checked" : "task-checkbox";
+
   const statusBadge = task.status !== "todo"
-    ? `<span class="badge status-badge status-${task.status}">${STATUS_LABELS[task.status] || task.status}</span>`
+    ? `<span class="badge status-${task.status}">${STATUS_LABELS[task.status] || task.status}</span>`
     : "";
 
   const tagsHtml = task.tags && task.tags.length > 0
     ? task.tags.map(tag => `<span class="badge tag">${escapeHtml(tag)}</span>`).join("")
     : "";
 
+  const dueText = formatDue(task.due_at);
+  const dueClass = dueText.includes("逾期") ? "badge overdue" : dueText.includes("今天") ? "badge overdue" : "badge low";
+
+  const estimateText = task.estimated_minutes ? `${task.estimated_minutes}m` : "";
+
   return `
-    <article class="task ${task.parent_task_id ? "subtask" : "parent-task"} ${task.status !== "todo" ? `task-${task.status}` : ""}">
-      <div>
+    <article class="task ${task.parent_task_id ? "subtask" : "parent-task"} ${isDone ? "task-done" : ""} ${isDropped ? "task-dropped" : ""}" style="animation-delay: ${index * 30}ms">
+      <button class="${checkboxClass}" data-toggle="${task.id}" aria-label="切换完成状态"></button>
+      <div class="task-body">
         <div class="task-title">${escapeHtml(task.title)}</div>
         <div class="task-meta">
           ${statusBadge}
           <span class="badge ${task.priority}">${priorityText(task.priority)}</span>
-          <span>${formatDue(task.due_at)}</span>
-          <span>${task.estimated_minutes ? `${task.estimated_minutes} 分钟` : "未估时"}</span>
-          ${task.parent_task_id ? `<span class="badge">子任务</span>` : ""}
+          ${dueText ? `<span class="${dueClass}">${dueText}</span>` : ""}
+          ${estimateText ? `<span class="badge low">${estimateText}</span>` : ""}
+          ${task.parent_task_id ? `<span class="badge low">子任务</span>` : ""}
           ${task.recurrence ? `<span class="badge recurrence">${recurrenceText(task.recurrence)}</span>` : ""}
           ${tagsHtml}
         </div>
@@ -72,19 +82,18 @@ function actionButtons(task) {
   const buttons = [];
   buttons.push(`<button data-edit="${task.id}" title="编辑">编辑</button>`);
 
-  // 只有主任务才能添加子任务
   if (!task.parent_task_id) {
-    buttons.push(`<button data-add-subtask="${task.id}" title="添加子任务">➕ 添加子任务</button>`);
+    buttons.push(`<button data-add-subtask="${task.id}" title="添加子任务">子任务</button>`);
   }
 
   if (task.status === "todo") {
-    buttons.push(`<button data-start="${task.id}" title="开始做">开始</button>`);
+    buttons.push(`<button data-start="${task.id}" title="开始做" class="primary">开始</button>`);
     buttons.push(`<button data-done="${task.id}" title="完成">完成</button>`);
     buttons.push(`<button data-postpone="${task.id}" title="推迟">推迟</button>`);
-    buttons.push(`<button data-drop="${task.id}" title="放弃">放弃</button>`);
+    buttons.push(`<button data-drop="${task.id}" title="放弃" class="danger-text">放弃</button>`);
   } else if (task.status === "doing") {
-    buttons.push(`<button data-done="${task.id}" title="完成">完成</button>`);
-    buttons.push(`<button data-drop="${task.id}" title="放弃">放弃</button>`);
+    buttons.push(`<button data-done="${task.id}" title="完成" class="primary">完成</button>`);
+    buttons.push(`<button data-drop="${task.id}" title="放弃" class="danger-text">放弃</button>`);
   } else {
     buttons.push(`<button data-reopen="${task.id}" title="重新打开">重开</button>`);
   }
@@ -93,6 +102,20 @@ function actionButtons(task) {
 }
 
 function bindTaskButtons() {
+  document.querySelectorAll("[data-toggle]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const taskId = btn.dataset.toggle;
+      const isChecked = btn.classList.contains("checked");
+      if (isChecked) {
+        await requestJson(`/api/tasks/${taskId}/reopen`, { method: "POST" });
+      } else {
+        await requestJson(`/api/tasks/${taskId}/done`, { method: "POST" });
+      }
+      await loadTasks();
+    });
+  });
+
   document.querySelectorAll("[data-start]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await requestJson(`/api/tasks/${btn.dataset.start}/start`, { method: "POST" });

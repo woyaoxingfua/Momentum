@@ -1,11 +1,18 @@
 import { requestJson } from "./api.js";
+import { saveHeartbeatConfig } from "./heartbeat.js";
+import { loadAdvice } from "./advice.js";
 
 let elements = {};
 let adviceText;
+let onConfigSaved = null;
 
 export function initConfig(els, adviceEl) {
   Object.assign(elements, els);
   adviceText = adviceEl;
+}
+
+export function setOnConfigSaved(fn) {
+  onConfigSaved = fn;
 }
 
 export async function loadConfig() {
@@ -14,7 +21,7 @@ export async function loadConfig() {
   if (text && !text.startsWith("没有配置项")) {
     const lines = text.split("\n").filter((l) => l.includes("="));
     lines.forEach((line) => {
-      const [key, ...rest] = line.replace("  ", "").split("=");
+      const [key, ...rest] = line.replaceAll("  ", "").split("=");
       const value = rest.join("=").trim();
       if (key.trim() === "api_key" && elements.configApiKey) elements.configApiKey.value = value;
       if (key.trim() === "api_base" && elements.configApiBase) elements.configApiBase.value = value;
@@ -55,15 +62,12 @@ export async function saveConfig() {
     }
 
     // 保存心跳配置
-    const { saveHeartbeatConfig } = await import("./heartbeat.js");
     await saveHeartbeatConfig();
 
-    const { loadAdvice } = await import("./advice.js");
     await loadAdvice();
-    
-    // 重新加载 provider 状态
-    const { loadProvider } = await import("./app.js");
-    await loadProvider();
+
+    // 通过回调通知 app.js 重新加载 provider 状态
+    if (onConfigSaved) await onConfigSaved();
     
     // 显示成功提示
     saveButton.textContent = "✓ 已保存";

@@ -1,88 +1,66 @@
+"""心跳和状态工具 - Heartbeat Tools
+提供心跳检测和状态报告工具
 """
-心跳工具 - Heartbeat Tools
-提供心跳配置和主动建议功能
-"""
+import json
 from typing import TYPE_CHECKING
 from agents import function_tool
 
 if TYPE_CHECKING:
     from ...storage import TaskStore
+    from ...services.heartbeat import HeartbeatService
+
+
+def _to_json(obj) -> str:
+    """将对象转换为 JSON 字符串，确保工具输出为文本格式"""
+    return json.dumps(obj, ensure_ascii=False, default=str)
 
 
 def create_heartbeat_tools(store: 'TaskStore', user_id: str):
-    """创建心跳相关的工具函数"""
+    """创建心跳和状态报告相关的工具函数"""
+    from ...services.heartbeat import HeartbeatService
+    
+    heartbeat_service = HeartbeatService(store)
     
     @function_tool
-    def get_heartbeat_config() -> dict:
-        """获取心跳配置"""
-        from ...services.heartbeat import HeartbeatService
-        
-        service = HeartbeatService(store)
-        return service.get_config(user_id)
+    def get_system_status() -> str:
+        """获取系统当前状态概览
+        包括：待办任务数、进行中任务数、逾期任务数、今日已完成任务数
+        """
+        return _to_json(heartbeat_service.get_system_status(user_id))
     
     @function_tool
-    def set_heartbeat_config(
-        enabled: bool | None = None,
-        start_hour: int | None = None,
-        end_hour: int | None = None,
-        interval_hours: int | None = None
-    ) -> dict:
-        """设置心跳配置
+    def generate_suggestion(context: str | None = None) -> str:
+        """生成心跳建议
+        基于当前任务状态生成建议（鼓励、提醒、任务推荐）
         
         Args:
-            enabled: 是否启用
-            start_hour: 开始时间（小时）
-            end_hour: 结束时间（小时）
-            interval_hours: 间隔（小时）
+            context: 附加上下文信息
         """
-        from ...services.heartbeat import HeartbeatService
-        
-        service = HeartbeatService(store)
-        config = service.set_config(
-            enabled=enabled,
-            start_hour=start_hour,
-            end_hour=end_hour,
-            interval_hours=interval_hours,
-            user_id=user_id
+        ctx = {"context": context} if context else {}
+        suggestion = heartbeat_service.generate_suggestion(
+            tasks=store.list_tasks(status=None, user_id=user_id),
+            context=ctx,
+            user_id=user_id,
         )
-        
-        status = "已启用" if config["enabled"] else "已禁用"
-        return {
-            "status": status,
-            "config": config
-        }
-    
-    @function_tool
-    def should_trigger_heartbeat() -> bool:
-        """检查是否应该触发心跳"""
-        from ...services.heartbeat import HeartbeatService
-        
-        service = HeartbeatService(store)
-        return service.should_trigger(user_id)
-    
-    @function_tool
-    def get_heartbeat_suggestion() -> str:
-        """获取心跳建议"""
-        from ...services.heartbeat import HeartbeatService
-        from ...context import build_user_context
-        
-        tasks = store.list_tasks(status=None, user_id=user_id)
-        prefs = {
-            "energy": "medium",
-            "available_minutes_today": 240,
-            "recent_pattern": "normal"
-        }
-        context = build_user_context(tasks, **prefs)
-        
-        service = HeartbeatService(store)
-        suggestion = service.generate_suggestion(tasks, context)
-        service.update_last_heartbeat(user_id)
-        
         return suggestion
     
+    @function_tool
+    def get_daily_summary() -> str:
+        """获取每日任务摘要
+        生成今天需要关注的任务和建议
+        """
+        return _to_json(heartbeat_service.get_daily_summary(user_id))
+    
+    @function_tool
+    def check_in() -> str:
+        """签到/打卡
+        记录用户当前状态并返回鼓励
+        """
+        return _to_json(heartbeat_service.check_in(user_id))
+    
     return [
-        get_heartbeat_config,
-        set_heartbeat_config,
-        should_trigger_heartbeat,
-        get_heartbeat_suggestion,
+        get_system_status,
+        generate_suggestion,
+        get_daily_summary,
+        check_in,
     ]

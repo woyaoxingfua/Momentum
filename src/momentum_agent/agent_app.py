@@ -15,6 +15,29 @@ from .storage import TaskStore
 
 log = get_logger("agent")
 
+# ═══════════════════════════════════════════════════════════════════
+# 对话历史管理 — 基于 to_input_list() 的多轮记忆
+# ═══════════════════════════════════════════════════════════════════
+
+_conversation_history: dict[str, list] = {}
+MAX_HISTORY_ITEMS = 40  # 保留最近 40 条消息（约 20 轮对话）
+
+
+def _get_history(user_id: str) -> list:
+    """获取用户的对话历史"""
+    return list(_conversation_history.get(user_id, []))
+
+
+def _save_history(user_id: str, history: list) -> None:
+    """保存对话历史，截断到最近 MAX_HISTORY 条"""
+    _conversation_history[user_id] = history[-MAX_HISTORY_ITEMS:]
+
+
+def _clear_history(user_id: str) -> None:
+    """清除用户对话历史"""
+    _conversation_history.pop(user_id, None)
+
+
 __all__ = [
     "create_task_from_text",
     "create_plan_from_text",
@@ -30,6 +53,7 @@ __all__ = [
     "run_agent_message",
     "run_agent_message_stream",
     "provider_status",
+    "clear_conversation_history",
 ]
 
 
@@ -339,13 +363,149 @@ def _make_hooks():
 
 
 def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, user_id: str = DEFAULT_USER_ID):
-    """Build the unified Momentum agent — single agent, all tools, SDK-native session."""
-    from agents import Agent, OpenAIChatCompletionsModel
-    from .agents import create_agent_tools
+    """Build the unified Momentum agent with handoffs to specialist sub-agents."""
+    from agents import Agent, OpenAIChatCompletionsModel, function_tool
+    from .agents import (
+        create_task_tools, create_subtask_tools, create_relation_tools,
+        create_weather_tools, create_heartbeat_tools,
+        create_insight_tools, create_focus_tools,
+    )
+    from .agents.agent import _to_json
 
     model = OpenAIChatCompletionsModel(model=provider.model, openai_client=openai_client)
-    tools = create_agent_tools(store, user_id=user_id)
+    model_settings = build_model_settings(provider)
     now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
+
+    # ── 专家 Agent：洞察与统计 ──
+    insight_agent = Agent(
+        name="InsightAgent",
+        handoff_description="当用户问关于任务统计、完成率、行为洞察、专注推荐、逾期分析、今日/本周任务时，转交给此专家",
+        instructions=f"""你是 Momentum 的**洞察分析专家**，专门负责任务数据分析和智能推荐。
+
+## 你的工具
+- get_completion_stats — 任务完成统计
+- get_behavioral_profile — 用户行为画像
+- get_insights — 行为洞察列表
+- get_strategic_summary — 战略摘要
+- estimate_task_smart — 智能预估任务时间
+- get_next_best_task — 推荐最佳任务
+- get_tasks_due_today — 今日到期任务
+- get_tasks_due_this_week — 本周到期任务
+- get_overdue_tasks — 逾期任务
+- get_doing_tasks — 进行中任务
+
+## 工作方式
+1. 收到问题后，先调相关工具获取数据
+2. 可以并行调用多个工具（如 get_completion_stats + get_behavioral_profile）
+3. 用数据说话，给出有依据的分析和建议
+4. 发现问题（逾期、积压、倦怠）要主动指出
+
+## 沟通风格
+- 中文，像朋友聊天
+- 用轻量 Markdown 展示数据（表格、列表）
+- 给出具体数字和可执行的建议
+- 不要长篇大论
+
+## 状态
+时间：{now_str}
+用户：{user_id}""",
+        model=model,
+        model_settings=model_settings,
+        tools=create_insight_tools(store, user_id) + create_focus_tools(store, user_id),
+    )
+
+    # ── 专家 Agent：天气与户外 ──
+    weather_agent = Agent(
+        name="WeatherAgent",
+        handoff_description="当用户问关于天气、户外活动、位置信息时，转交给此专家",
+        instructions=f"""你是 Momentum 的**天气与户外活动专家**，帮助用户根据天气规划活动。
+
+## 你的工具
+- get_current_weather — 获取当前天气
+- plan_outdoor_activity — 规划户外活动
+- set_user_location — 设置默认位置
+- get_user_location — 获取默认位置
+- get_location_info — 获取位置信息
+
+## 工作方式
+1. 天气相关问题 → get_current_weather
+2. 户外活动规划 → plan_outdoor_activity（会自动结合天气判断）
+3. 如果用户没指定城市，使用其保存的默认位置
+4. 给出明确的建议：适合/不适合，原因，替代方案
+
+## 沟通风格
+- 中文，简洁明了
+- 用 emoji 让天气信息更直观
+- 给出明确的行动建议
+
+## 状态
+时间：{now_str}
+用户：{user_id}""",
+        model=model,
+        model_settings=model_settings,
+        tools=create_weather_tools(store, user_id),
+    )
+
+    # ── 主 Agent：Momentum ──
+    core_tools = (
+        create_task_tools(store, user_id)
+        + create_subtask_tools(store, user_id)
+        + create_relation_tools(store, user_id)
+        + create_heartbeat_tools(store, user_id)
+    )
+
+    @function_tool
+    def get_all_tags() -> str:
+        """获取所有标签"""
+        return _to_json(store.get_all_tags(user_id=user_id))
+
+    @function_tool
+    def get_tasks_by_tag(tag: str) -> str:
+        """获取指定标签的任务"""
+        tasks = store.get_tasks_by_tag(tag, user_id=user_id)
+        return _to_json([{"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority.value} for t in tasks])
+
+    @function_tool
+    def add_tags_to_task(task_id: int, tags: list[str]) -> str:
+        """为任务添加标签"""
+        task = store._get_task(task_id)
+        if not task or (task.user_id and task.user_id != user_id):
+            return f"任务 #{task_id} 不存在"
+        all_tags = list(set((task.tags or []) + tags))
+        updated = store.update_task(task_id, tags=all_tags, user_id=user_id)
+        return f"已更新任务 #{updated.id} 的标签" if updated else "更新失败"
+
+    @function_tool
+    def save_note(content: str) -> str:
+        """保存笔记/偏好"""
+        from datetime import datetime as _dt
+        key = f"agent_note_{int(_dt.now().timestamp())}"
+        store.set_memory(key, content, user_id=user_id)
+        return "已保存笔记"
+
+    @function_tool
+    def get_my_notes() -> str:
+        """获取所有笔记"""
+        all_mem = store.get_all_memory(user_id=user_id)
+        return _to_json({k: v for k, v in all_mem.items() if k.startswith("agent_note_")})
+
+    @function_tool
+    def get_user_context() -> str:
+        """获取用户上下文（精力、可用时间等）"""
+        from .context import build_user_context
+        prefs = _read_preferences(store, user_id=user_id)
+        ctx = build_user_context(store.list_tasks(None, user_id=user_id), **prefs)
+        return _to_json({"now": ctx.now.isoformat(), "energy": ctx.energy, "available_minutes_today": ctx.available_minutes_today})
+
+    @function_tool
+    def get_daily_review() -> str:
+        """获取每日回顾"""
+        from .context import daily_review as _review
+        prefs = _read_preferences(store, user_id=user_id)
+        ctx = build_user_context(store.list_tasks(None, user_id=user_id), **prefs)
+        return _review(store.list_tasks(None, user_id=user_id), ctx)
+
+    core_tools += [get_all_tags, get_tasks_by_tag, add_tags_to_task, save_note, get_my_notes, get_user_context, get_daily_review]
 
     return Agent(
         name="Momentum",
@@ -360,12 +520,15 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 - 用户明确给出要做的事（动作 + 目标，通常带时间/截止）→ 先用 search_tasks 查重：
   - 没有相近任务 → 直接 create_task 或 create_plan
   - 有相近任务 → 询问是否仍需新建（避免重复）
-- 即使你在心里查重，也不要对用户说“我先查一下”，直接给出结果/问题。
-- 用户说"hi"/"早"/开场白 → 拉 list_tasks + get_user_context + get_daily_review（可以同时调）
+- 即使你在心里查重，也不要对用户说"我先查一下"，直接给出结果/问题。
+- 用户说"hi"/"早"/开场白 → 同时调 get_overview + get_user_context（并行）
 - 用户提到某个任务 → search_tasks 找到它
 - 用户说做了某事 → 先 search_tasks 确认是哪个任务，再 complete_task
 - 用户情绪低/说忙/说累 → 拉 get_user_context 了解状态
 - 用户提到偏好/习惯 → save_note 记下来，下次记得
+- 用户问"接下来做什么"/"该做啥" → 你没有 get_next_best_task 工具，但可以调 get_overview 看看待办任务，手动推荐
+- 用户问"今天有什么"/"这周有什么"/"逾期了什么"/"完成率/统计" → **转交给 InsightAgent**
+- 用户问天气/户外活动 → **转交给 WeatherAgent**
 
 **关键**：如果用户说了任何涉及"做完了/做了一半/不想做了/推迟"的话，你**必须**找到对应任务并操作。不准只嘴上说"好的"然后什么都不做。
 
@@ -375,42 +538,53 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 - 需要开始的 → start_task
 - 确认放弃的 → drop_task
 - 需要推迟的 → postpone_task
+- 工具返回"不存在"时 → 不要放弃，用 search_tasks 模糊搜索找到正确任务
 
 ### 第三步：反馈（告诉用户你做了什么，然后主动建议下一步）
-- **先给一句操作结果**（比如“已创建任务 #x…”）
+- **先给一句操作结果**（比如"已创建任务 #x…"）
 - 只给**简短**的概览/建议（除非用户要求详细）
 - 如果发现异常（过期/堆积/长期没进展），再补充提醒
+- 有进行中的任务时，提醒用户先完成它
 
-## 工具清单（19 个）
+## 你的工具清单
 
-**总览：** get_overview — 一次拿到全部状态、过期数、即将到期数、前 3 优先级任务
-**查询：** list_tasks, search_tasks, get_daily_review, get_user_context
-**操作：** create_task, create_plan, edit_task, start_task, complete_task, drop_task, postpone_task
+**总览：** get_overview — 一次拿到全部状态
+**查询：** list_tasks, search_tasks, get_task, get_daily_review, get_user_context
+**操作：** create_task, create_plan, edit_task, start_task, complete_task, drop_task, postpone_task, reopen_task
+**子任务：** create_subtask, bulk_create_subtasks, get_subtasks, get_task_with_subtasks
+**关联：** add_task_dependency, remove_task_dependency, get_task_dependencies, is_task_blocked
 **标签：** get_all_tags, get_tasks_by_tag, add_tags_to_task
 **批量：** batch_complete_tasks, batch_start_tasks
 **记忆：** save_note, get_my_notes
+**心跳：** get_system_status, generate_suggestion, get_daily_summary, check_in
+
+## 何时转交给专家 Agent
+- **统计/洞察/推荐/逾期/今日/本周任务** → 转交给 InsightAgent
+- **天气/户外活动/位置** → 转交给 WeatherAgent
 
 ## 必须主动做的事
-
 1. **开场简报** — 用户问候时，先调 get_overview 拿全貌，再给今日总结
-2. **识别执行意图** — "搞定了""做完了""交了" → search_tasks + complete_task，不只回"好的"
-3. **发现并指出问题** — 过期任务、长期积压、连续推迟 → 指出来，建议处理
-4. **记住重要信息** — 用户说了偏好/习惯/目标 → save_note，下次对话用 get_my_notes 回顾
-5. **并行调工具** — get_overview + get_user_context + get_daily_review 可以一次同时调
-6. **模式识别** — 如果你注意到：某任务被反复推迟 → 建议拆分；每天都说"忙" → 建议减少任务量；过期任务堆积 → 建议集中清理
+2. **识别执行意图** — "搞定了""做完了""交了" → search_tasks + complete_task
+3. **发现并指出问题** — 过期任务、长期积压、连续推迟 → 指出来
+4. **记住重要信息** — 用户说了偏好/习惯 → save_note
+5. **并行调工具** — get_overview + get_user_context 可以一次同时调
+6. **主动推荐** — 用户不知道做什么时，用 get_overview 看待办，手动推荐
 
 ## 沟通风格
 - 中文，像朋友聊天，不机器人腔
 - 轻量 Markdown 让信息清晰
 - 做了操作要报告，没做操作要说明为什么不
 - 信息不足就追问一句，别猜
+- 回复简洁，不要长篇大论
+- **记住之前的对话内容**，用户提到的任务、偏好、上下文都要记住
 
 ## 状态
 时间：{now_str}
 用户：{user_id}""",
         model=model,
-        model_settings=build_model_settings(provider),
-        tools=tools,
+        model_settings=model_settings,
+        tools=core_tools,
+        handoffs=[insight_agent, weather_agent],
     )
 
 
@@ -508,11 +682,7 @@ async def _build_output_guardrail():
 async def run_agent_message(
     db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
 ) -> str:
-    """Run a message through the full agent system (CLI and web non-streaming).
-    
-    Supports image_base64 for vision tasks: pass a base64-encoded JPEG/PNG image
-    and the agent will analyze it and extract tasks from the image.
-    """
+    """Run a message through the full agent system with conversation history."""
     log.info("agent_message user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
     store = TaskStore(db_path)
     user_config = store.get_all_memory(user_id=user_id)
@@ -538,9 +708,10 @@ async def run_agent_message(
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
 
-    # 图片识别：构造多模态消息
+    # 构建带历史记录的输入
+    history = _get_history(user_id)
     if image_base64:
-        agent_input = [
+        agent_input = history + [
             {
                 "role": "user",
                 "content": [
@@ -559,8 +730,9 @@ async def run_agent_message(
             ),
         )
     else:
+        agent_input = history + [{"role": "user", "content": message}]
         result = await Runner.run(
-            agent, message,
+            agent, agent_input,
             max_turns=30,
             hooks=_make_hooks(),
             run_config=RunConfig(
@@ -571,16 +743,23 @@ async def run_agent_message(
         )
 
     reply = result.final_output
-    log.info("agent done: user=%r len=%d", user_id, len(reply))
+    # 保存对话历史
+    _save_history(user_id, result.to_input_list())
+    log.info("agent done: user=%r len=%d history=%d", user_id, len(reply), len(_get_history(user_id)))
     return reply
 
 
 async def run_agent_message_stream(
     db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
-) -> AsyncIterator[str]:
-    """Stream agent response by first running non-streamed and then yielding chunks manually.
+) -> AsyncIterator[dict]:
+    """True streaming with Runner.run_streamed + fallback to Runner.run with hooks.
 
-    This completely avoids Agents SDK's history management issues.
+    Yields dict events:
+    - {"type": "tool_start", "name": "search_tasks"}
+    - {"type": "tool_end", "name": "search_tasks", "result": "..."}
+    - {"type": "chunk", "text": "你好"}
+    - {"type": "done"}
+    - {"type": "error", "message": "..."}
     """
     log.info("agent_stream user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
     store = TaskStore(db_path)
@@ -589,20 +768,23 @@ async def run_agent_message_stream(
 
     if not provider.is_configured:
         if image_base64:
-            yield "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
+            yield {"type": "chunk", "text": "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"}
+            yield {"type": "done"}
             return
         if should_review(message):
-            yield local_review(store, user_id=user_id)
+            yield {"type": "chunk", "text": local_review(store, user_id=user_id)}
         elif should_plan(message):
-            yield create_plan_from_text(store, message, user_id=user_id)
+            yield {"type": "chunk", "text": create_plan_from_text(store, message, user_id=user_id)}
         else:
-            yield create_task_from_text(store, message, user_id=user_id)
+            yield {"type": "chunk", "text": create_task_from_text(store, message, user_id=user_id)}
+        yield {"type": "done"}
         return
 
     try:
         from agents import Runner, RunConfig, set_default_openai_client
     except ImportError:
-        yield create_task_from_text(store, message, user_id=user_id)
+        yield {"type": "chunk", "text": create_task_from_text(store, message, user_id=user_id)}
+        yield {"type": "done"}
         return
     openai_client = build_openai_client(provider)
     set_default_openai_client(openai_client, use_for_tracing=not provider.disable_tracing)
@@ -611,9 +793,9 @@ async def run_agent_message_stream(
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
 
-    # 完全使用非流式方式运行，然后手动分段输出
+    history = _get_history(user_id)
     if image_base64:
-        agent_input = [
+        agent_input = history + [
             {
                 "role": "user",
                 "content": [
@@ -622,53 +804,97 @@ async def run_agent_message_stream(
                 ],
             }
         ]
-        result = await Runner.run(
-            agent, agent_input,
-            max_turns=30,
-            hooks=_make_hooks(),
-            run_config=RunConfig(
-                output_guardrails=[out_guardrail],
-                workflow_name="momentum-vision-stream",
-            ),
-        )
+        run_config = RunConfig(output_guardrails=[out_guardrail], workflow_name="momentum-vision-stream")
     else:
-        result = await Runner.run(
-            agent, message,
-            max_turns=30,
-            hooks=_make_hooks(),
-            run_config=RunConfig(
-                input_guardrails=[guardrail],
-                output_guardrails=[out_guardrail],
-                workflow_name="momentum-chat-stream",
-            ),
-        )
-    
-    reply = result.final_output
-    log.info("agent done: user=%r len=%d", user_id, len(reply))
-    
-    # 手动分段输出，模拟流式效果 - 更自然的分段策略
-    import re
-    # 根据标点符号和换行来分段，让输出更自然
-    chunks = []
-    current = ""
-    for char in reply:
-        current += char
-        # 在标点符号或一定长度后分段
-        if len(current) >= 10 or char in '，。！？、；："\'）】』》」』、\n':
-            chunks.append(current)
-            current = ""
-    if current:
-        chunks.append(current)
-    
-    # 如果没有合适的分段点，就按字符输出
-    if not chunks:
-        for char in reply:
-            yield char
-            await asyncio.sleep(0.02)
-    else:
-        for chunk in chunks:
-            yield chunk
-            await asyncio.sleep(0.03)
+        agent_input = history + [{"role": "user", "content": message}]
+        run_config = RunConfig(input_guardrails=[guardrail], output_guardrails=[out_guardrail], workflow_name="momentum-chat-stream")
+
+    # ── 尝试真流式 ──
+    try:
+        from agents.stream_events import RunItemStreamEvent, RawResponsesStreamEvent
+        result = Runner.run_streamed(agent, agent_input, max_turns=30, hooks=_make_hooks(), run_config=run_config)
+        async for event in result.stream_events():
+            if isinstance(event, RunItemStreamEvent):
+                if event.name == "tool_called":
+                    tool_name = getattr(event.item, "tool_name", None) or getattr(event.item, "raw_item", {}).get("name", "tool")
+                    yield {"type": "tool_start", "name": str(tool_name)}
+                elif event.name == "tool_output":
+                    tool_name = getattr(event.item, "tool_name", None) or "tool"
+                    yield {"type": "tool_end", "name": str(tool_name)}
+            elif isinstance(event, RawResponsesStreamEvent):
+                data = event.data
+                dtype = type(data).__name__
+                # 只推送文本增量（跳过推理增量）
+                if hasattr(data, "delta") and data.delta and "TextDelta" in dtype and "Reasoning" not in dtype:
+                    yield {"type": "chunk", "text": data.delta}
+
+        if result.is_complete:
+            _save_history(user_id, result.to_input_list())
+            yield {"type": "done"}
+            log.info("agent stream done (real streaming): user=%r", user_id)
+            return
+    except Exception as exc:
+        log.warning("Streaming failed, falling back to Runner.run: %s", exc)
+
+    # ── 回退：Runner.run + hook 事件推送 ──
+    event_queue: asyncio.Queue = asyncio.Queue()
+
+    from agents.lifecycle import RunHooksBase
+
+    class _StreamingHooks(RunHooksBase):
+        async def on_tool_start(self, context, agent, tool):
+            await event_queue.put({"type": "tool_start", "name": tool.name})
+        async def on_tool_end(self, context, agent, tool, result):
+            await event_queue.put({"type": "tool_end", "name": tool.name})
+        async def on_agent_start(self, context, agent):
+            pass
+        async def on_agent_end(self, context, agent, output):
+            pass
+
+    hooks = _StreamingHooks()
+
+    async def _run_agent():
+        try:
+            result = await Runner.run(agent, agent_input, max_turns=30, hooks=hooks, run_config=run_config)
+            await event_queue.put({"type": "_done", "text": result.final_output, "history": result.to_input_list()})
+        except Exception as e:
+            await event_queue.put({"type": "_error", "message": str(e)})
+
+    task = asyncio.create_task(_run_agent())
+
+    # 从队列中读取事件并推送给前端
+    while True:
+        try:
+            event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+        except asyncio.TimeoutError:
+            if task.done():
+                break
+            continue
+
+        if event["type"] == "_done":
+            # 流式输出最终文本
+            reply = event["text"]
+            for char in reply:
+                yield {"type": "chunk", "text": char}
+                await asyncio.sleep(0.015)
+            _save_history(user_id, event.get("history", []))
+            yield {"type": "done"}
+            break
+        elif event["type"] == "_error":
+            yield {"type": "error", "message": event["message"]}
+            yield {"type": "done"}
+            break
+        else:
+            yield event
+
+    # 确保任务完成
+    if not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    log.info("agent stream done (fallback): user=%r", user_id)
 
 
 def build_openai_client(provider: ProviderConfig):
@@ -719,3 +945,8 @@ def should_plan(message: str) -> bool:
 def should_review(message: str) -> bool:
     review_markers = ("复盘", "总结", "今天怎么样", "任务状态")
     return any(marker in message for marker in review_markers)
+
+
+def clear_conversation_history(user_id: str = DEFAULT_USER_ID) -> None:
+    """清除用户的对话历史"""
+    _clear_history(user_id)

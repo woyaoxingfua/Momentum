@@ -2,6 +2,7 @@
 天气和位置工具 - Weather and Location Tools
 提供天气查询和位置信息工具函数
 """
+import json
 from typing import TYPE_CHECKING
 from agents import function_tool
 
@@ -9,6 +10,11 @@ if TYPE_CHECKING:
     from ...storage import TaskStore
     from ...services.weather import WeatherService
     from ...services.location import LocationService
+
+
+def _to_json(obj) -> str:
+    """将对象转换为 JSON 字符串，确保工具输出为文本格式"""
+    return json.dumps(obj, ensure_ascii=False, default=str)
 
 
 def create_weather_tools(store: 'TaskStore', user_id: str):
@@ -30,23 +36,23 @@ def create_weather_tools(store: 'TaskStore', user_id: str):
         return f"✅ 已设置默认位置为：{city}"
     
     @function_tool
-    def get_user_location() -> dict:
+    def get_user_location() -> str:
         """获取用户默认位置"""
         city = store.get_memory("user_location", user_id=user_id)
         if not city:
-            return {
+            return _to_json({
                 "city": "北京",
                 "is_default": True,
                 "message": "还未设置默认位置，当前使用默认位置：北京"
-            }
-        return {
+            })
+        return _to_json({
             "city": city,
             "is_default": False,
             "message": f"当前保存的位置是：{city}"
-        }
+        })
     
     @function_tool
-    def get_current_weather(city: str | None = None) -> dict:
+    def get_current_weather(city: str | None = None) -> str:
         """获取当前天气
         
         Args:
@@ -59,10 +65,10 @@ def create_weather_tools(store: 'TaskStore', user_id: str):
             else:
                 city = "北京"
         
-        return weather_service.get_weather(city)
+        return _to_json(weather_service.get_weather(city))
     
     @function_tool
-    def get_location_info(city: str | None = None) -> dict:
+    def get_location_info(city: str | None = None) -> str:
         """获取位置信息
         
         Args:
@@ -75,7 +81,7 @@ def create_weather_tools(store: 'TaskStore', user_id: str):
             else:
                 city = "北京"
         
-        return location_service.get_location_info(city)
+        return _to_json(location_service.get_location_info(city))
     
     @function_tool
     def plan_outdoor_activity(activity: str, city: str | None = None, target_date: str | None = None) -> str:

@@ -81,7 +81,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
                     "/": ("index.html", "text/html; charset=utf-8"),
                     "/login.html": ("login.html", "text/html; charset=utf-8"),
                     "/app.css": ("app.css", "text/css; charset=utf-8"),
-                    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                    "/manifest.json": ("manifest.json", "application/manifest+json; charset=utf-8"),
+                    "/icon.svg": ("icon.svg", "image/svg+xml"),
                 }
                 if path in STATIC_MAP:
                     name, ct = STATIC_MAP[path]
@@ -208,6 +209,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
                     handlers.handle_chat(self, user_id)
                 elif path == "/api/chat/stream":
                     handlers.handle_chat_stream(self, user_id)
+                elif path == "/api/chat/clear":
+                    handlers.handle_chat_clear(self, user_id)
                 elif path == "/api/config":
                     handlers.handle_set_config(self, user_id)
                 elif path == "/api/import":

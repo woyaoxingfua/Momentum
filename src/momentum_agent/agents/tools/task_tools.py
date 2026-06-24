@@ -2,12 +2,18 @@
 任务管理工具 - Task Management Tools
 提供任务创建、查询、编辑等工具函数
 """
+import json
 from typing import TYPE_CHECKING
 from agents import function_tool
 
 if TYPE_CHECKING:
     from ...storage import TaskStore
     from ...parser import parse_task_text
+
+
+def _to_json(obj) -> str:
+    """将对象转换为 JSON 字符串，确保工具输出为文本格式"""
+    return json.dumps(obj, ensure_ascii=False, default=str)
 
 
 def create_task_tools(store: 'TaskStore', user_id: str):
@@ -56,7 +62,7 @@ def create_task_tools(store: 'TaskStore', user_id: str):
         return f"已创建任务 #{task.id}：{task.title}{due_info}{rec_info}{tags_info}"
     
     @function_tool
-    def list_tasks(status: str = "todo") -> list[dict]:
+    def list_tasks(status: str = "todo") -> str:
         """列出任务
         
         Args:
@@ -70,7 +76,7 @@ def create_task_tools(store: 'TaskStore', user_id: str):
             chosen = TaskStatus(status) if status in TaskStatus._value2member_map_ else TaskStatus.TODO
             tasks = store.list_tasks(chosen, user_id=user_id)
         
-        return [
+        return _to_json([
             {
                 "id": t.id,
                 "title": t.title,
@@ -83,10 +89,10 @@ def create_task_tools(store: 'TaskStore', user_id: str):
                 "tags": t.tags
             }
             for t in tasks
-        ]
+        ])
     
     @function_tool
-    def get_task(task_id: int) -> dict | None:
+    def get_task(task_id: int) -> str:
         """获取任务详情
         
         Args:
@@ -94,9 +100,9 @@ def create_task_tools(store: 'TaskStore', user_id: str):
         """
         task = store._get_task(task_id)
         if not task or (task.user_id and task.user_id != user_id):
-            return None
+            return _to_json(None)
         
-        return {
+        return _to_json({
             "id": task.id,
             "title": task.title,
             "status": task.status.value,
@@ -109,7 +115,7 @@ def create_task_tools(store: 'TaskStore', user_id: str):
             "tags": task.tags,
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
-        }
+        })
     
     @function_tool
     def edit_task(
@@ -230,13 +236,13 @@ def create_task_tools(store: 'TaskStore', user_id: str):
         return f"已推迟 #{task.id}：{task.title} → {new_due}"
     
     @function_tool
-    def search_tasks(query: str) -> list[dict]:
+    def search_tasks(query: str) -> str:
         """搜索任务
         
         Args:
             query: 搜索关键词
         """
-        return [
+        return _to_json([
             {
                 "id": t.id,
                 "title": t.title,
@@ -245,10 +251,10 @@ def create_task_tools(store: 'TaskStore', user_id: str):
                 "due_at": t.due_at.isoformat() if t.due_at else None
             }
             for t in store.search_tasks(query, user_id=user_id)
-        ]
+        ])
     
     @function_tool
-    def get_overview() -> dict:
+    def get_overview() -> str:
         """获取任务总览"""
         from ...models import TaskStatus
         from datetime import datetime, timedelta
@@ -267,7 +273,7 @@ def create_task_tools(store: 'TaskStore', user_id: str):
                 elif t.due_at < now + timedelta(days=2):
                     due_soon += 1
         
-        return {
+        return _to_json({
             "total": len(all_tasks),
             "by_status": counts,
             "overdue": overdue,
@@ -281,7 +287,7 @@ def create_task_tools(store: 'TaskStore', user_id: str):
                 }
                 for t in all_tasks if t.status == TaskStatus.TODO
             ][:3],
-        }
+        })
     
     return [
         create_task,

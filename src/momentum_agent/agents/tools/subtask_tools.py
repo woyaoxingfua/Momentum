@@ -2,11 +2,27 @@
 子任务管理工具 - Subtask Management Tools
 提供子任务的创建、查询等工具函数
 """
+import json
 from typing import TYPE_CHECKING
 from agents import function_tool
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from ...storage import TaskStore
+
+
+def _to_json(obj) -> str:
+    """将对象转换为 JSON 字符串，确保工具输出为文本格式"""
+    return json.dumps(obj, ensure_ascii=False, default=str)
+
+
+class SubtaskInput(BaseModel):
+    """子任务输入模型"""
+    title: str
+    due_at: str | None = None
+    priority: str = "medium"
+    notes: str | None = None
+    tags: list[str] | None = None
 
 
 def create_subtask_tools(store: 'TaskStore', user_id: str):
@@ -54,7 +70,7 @@ def create_subtask_tools(store: 'TaskStore', user_id: str):
         return f"已创建子任务 #{task.id}（父任务 #{parent_task_id}）：{task.title}{due_info}{tags_info}"
     
     @function_tool
-    def get_task_with_subtasks(task_id: int) -> dict | None:
+    def get_task_with_subtasks(task_id: int) -> str:
         """获取任务及其子任务
         
         Args:
@@ -62,9 +78,9 @@ def create_subtask_tools(store: 'TaskStore', user_id: str):
         """
         task = store.get_task_with_subtasks(task_id, user_id=user_id)
         if not task:
-            return None
+            return _to_json(None)
         
-        return {
+        return _to_json({
             "id": task.id,
             "title": task.title,
             "status": task.status.value,
@@ -83,28 +99,29 @@ def create_subtask_tools(store: 'TaskStore', user_id: str):
                 }
                 for t in task.subtasks or []
             ]
-        }
+        })
     
     @function_tool
-    def bulk_create_subtasks(parent_task_id: int, subtasks: list[dict]) -> str:
+    def bulk_create_subtasks(parent_task_id: int, subtasks: list[SubtaskInput]) -> str:
         """批量创建子任务
         
         Args:
             parent_task_id: 父任务ID
             subtasks: 子任务列表（包含title、due_at、priority等）
         """
-        created = store.bulk_create_subtasks(parent_task_id, subtasks, user_id=user_id)
+        subtask_dicts = [s.model_dump() for s in subtasks]
+        created = store.bulk_create_subtasks(parent_task_id, subtask_dicts, user_id=user_id)
         return f"已为任务 #{parent_task_id} 创建 {len(created)} 个子任务：{', '.join(t.title for t in created)}"
     
     @function_tool
-    def get_subtasks(parent_task_id: int) -> list[dict]:
+    def get_subtasks(parent_task_id: int) -> str:
         """获取父任务的所有子任务
         
         Args:
             parent_task_id: 父任务ID
         """
         subtasks = store.get_subtasks(parent_task_id, user_id=user_id)
-        return [
+        return _to_json([
             {
                 "id": t.id,
                 "title": t.title,
@@ -114,7 +131,7 @@ def create_subtask_tools(store: 'TaskStore', user_id: str):
                 "tags": t.tags
             }
             for t in subtasks
-        ]
+        ])
     
     return [
         create_subtask,

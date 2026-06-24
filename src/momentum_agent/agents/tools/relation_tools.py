@@ -2,11 +2,17 @@
 任务关联工具 - Task Relation Tools
 提供任务依赖、关联等工具函数
 """
+import json
 from typing import TYPE_CHECKING
 from agents import function_tool
 
 if TYPE_CHECKING:
     from ...storage import TaskStore
+
+
+def _to_json(obj) -> str:
+    """将对象转换为 JSON 字符串，确保工具输出为文本格式"""
+    return json.dumps(obj, ensure_ascii=False, default=str)
 
 
 def create_relation_tools(store: 'TaskStore', user_id: str):
@@ -39,14 +45,14 @@ def create_relation_tools(store: 'TaskStore', user_id: str):
         return f"已移除依赖关系：任务 #{task_id} 不再依赖任务 #{depends_on_task_id}"
     
     @function_tool
-    def get_task_dependencies(task_id: int) -> list[dict]:
+    def get_task_dependencies(task_id: int) -> str:
         """获取任务依赖
         
         Args:
             task_id: 任务ID
         """
         dependencies = store.get_dependencies(task_id, user_id=user_id)
-        return [
+        return _to_json([
             {
                 "id": t.id,
                 "title": t.title,
@@ -55,17 +61,17 @@ def create_relation_tools(store: 'TaskStore', user_id: str):
                 "due_at": t.due_at.isoformat() if t.due_at else None
             }
             for t in dependencies
-        ]
+        ])
     
     @function_tool
-    def get_task_dependents(task_id: int) -> list[dict]:
+    def get_task_dependents(task_id: int) -> str:
         """获取依赖该任务的任务
         
         Args:
             task_id: 任务ID
         """
         dependents = store.get_dependents(task_id, user_id=user_id)
-        return [
+        return _to_json([
             {
                 "id": t.id,
                 "title": t.title,
@@ -74,7 +80,7 @@ def create_relation_tools(store: 'TaskStore', user_id: str):
                 "due_at": t.due_at.isoformat() if t.due_at else None
             }
             for t in dependents
-        ]
+        ])
     
     @function_tool
     def add_task_relation(source_task_id: int, target_task_id: int, relation_type: str = "relates_to") -> str:
@@ -98,14 +104,14 @@ def create_relation_tools(store: 'TaskStore', user_id: str):
         return f"已创建关系：任务 #{source_task_id} {relation_type} 任务 #{target_task_id}"
     
     @function_tool
-    def get_task_relations(task_id: int) -> list[dict]:
+    def get_task_relations(task_id: int) -> str:
         """获取任务的所有关系
         
         Args:
             task_id: 任务ID
         """
         relations = store.get_task_relations(task_id, user_id=user_id)
-        return [
+        return _to_json([
             {
                 "id": r.id,
                 "source_task_id": r.source_task_id,
@@ -114,16 +120,16 @@ def create_relation_tools(store: 'TaskStore', user_id: str):
                 "created_at": r.created_at.isoformat()
             }
             for r in relations
-        ]
+        ])
     
     @function_tool
-    def is_task_blocked(task_id: int) -> bool:
+    def is_task_blocked(task_id: int) -> str:
         """检查任务是否被阻塞
         
         Args:
             task_id: 任务ID
         """
-        return store.is_task_blocked(task_id, user_id=user_id)
+        return _to_json({"blocked": store.is_task_blocked(task_id, user_id=user_id)})
     
     return [
         add_task_dependency,

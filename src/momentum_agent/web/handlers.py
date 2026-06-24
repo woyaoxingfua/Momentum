@@ -263,13 +263,14 @@ def handle_chat_stream(handler: MomentumHandler, user_id: str) -> None:
 
     async def _stream():
         try:
-            async for chunk in run_agent_message_stream(handler.db_path, message, user_id=user_id):
-                data = json.dumps({"chunk": chunk}, ensure_ascii=False)
+            async for event in run_agent_message_stream(handler.db_path, message, user_id=user_id):
+                # event 是 dict，直接序列化为 SSE
+                data = json.dumps(event, ensure_ascii=False)
                 handler.wfile.write(f"data: {data}\n\n".encode("utf-8"))
                 handler.wfile.flush()
         except Exception as exc:
             log.error("stream error: %s", exc)
-            error_data = json.dumps({"error": str(exc)}, ensure_ascii=False)
+            error_data = json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False)
             handler.wfile.write(f"data: {error_data}\n\n".encode("utf-8"))
             handler.wfile.flush()
 
@@ -277,6 +278,12 @@ def handle_chat_stream(handler: MomentumHandler, user_id: str) -> None:
 
 
 # ── 建议 & 复盘 ──────────────────────────────────────────────────
+
+def handle_chat_clear(handler: MomentumHandler, user_id: str) -> None:
+    """清除用户的对话历史"""
+    from ..agent_app import clear_conversation_history
+    clear_conversation_history(user_id)
+    handler.send_json({"message": "对话历史已清除"})
 
 def handle_advice(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import local_advice

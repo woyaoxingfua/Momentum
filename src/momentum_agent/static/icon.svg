@@ -1,4 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#20c997"/>
-  <text x="256" y="320" font-family="Arial, sans-serif" font-size="280" font-weight="bold" fill="white" text-anchor="middle">M</text>
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00e5cc"/>
+      <stop offset="100%" stop-color="#ff2d92"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="100" fill="#0b0b10"/>
+  <rect x="40" y="40" width="432" height="432" rx="80" fill="none" stroke="url(#g)" stroke-width="8"/>
+  <!-- M letter with gradient -->
+  <text x="256" y="330" font-family="system-ui, -apple-system, sans-serif" font-size="260" font-weight="800" fill="url(#g)" text-anchor="middle" letter-spacing="-10">M</text>
 </svg>

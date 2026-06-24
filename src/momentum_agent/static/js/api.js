@@ -19,17 +19,13 @@ export async function requestJson(url, options = {}) {
 }
 
 export async function logout() {
-  try {
-    const token = localStorage.getItem("momentum_token");
-    if (token) {
-      await fetch("/api/logout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-      });
-    }
-  } catch (error) {
-    // 即使 logout API 失败也继续登出流程
-    console.log("登出请求失败，但继续登出流程");
+  const token = localStorage.getItem("momentum_token");
+  // 尝试调用登出 API，但不阻塞页面跳转
+  if (token) {
+    fetch("/api/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    }).catch(() => {}); // 静默忽略错误，页面会立即跳转
   }
   localStorage.removeItem("momentum_token");
   localStorage.removeItem("momentum_user");
@@ -46,14 +42,18 @@ export function escapeHtml(value) {
 }
 
 export function formatDue(value) {
-  if (!value) return "无截止";
+  if (!value) return "";
   const date = new Date(value);
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((dueDay - today) / 86400000);
+
+  if (diffDays < 0) return `逾期${-diffDays}天`;
+  if (diffDays === 0) return `今天 ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+  if (diffDays === 1) return "明天";
+  if (diffDays <= 7) return `${diffDays}天后`;
+  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 export function toDatetimeLocal(iso) {
