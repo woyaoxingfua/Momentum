@@ -25,8 +25,10 @@ AI 驱动的智能任务管理助手。不是又一个 Todoist —— 它会学�
 - **任务关系** — 5 种关系类型（依赖/阻塞/关联/父子/顺序）
 
 ### AI Agent
-- **23 个工具** — 自主决策：查任务、建任务、分析模式、给建议、记偏好
-- **流式输出** — 打字机效果，边想边说
+- **40+ 工具** — 自主决策：查任务、建任务、拆子任务、分析模式、给建议、记偏好
+- **对话记忆** — 基于 `to_input_list()` 的多轮上下文，自动管理 40 条历史
+- **真流式输出** — `Runner.run_streamed` 逐 token 打字机效果，工具调用实时推送
+- **多 Agent 协作** — `handoffs` 自动路由：主 Agent + InsightAgent(统计专家) + WeatherAgent(天气专家)
 - **视觉识别** — 上传图片，AI 自动提取任务（需配置视觉模型）
 - **输入/输出 Guardrails** — 防空输入、防超长输出
 
@@ -126,6 +128,7 @@ src/momentum_agent/
 │   └── tools/          # 工具子模块
 │       ├── task_tools.py
 │       ├── subtask_tools.py
+│       ├── focus_tools.py
 │       ├── relation_tools.py
 │       ├── weather_tools.py
 │       ├── heartbeat_tools.py
