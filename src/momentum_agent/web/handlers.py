@@ -254,12 +254,14 @@ def handle_chat_stream(handler: MomentumHandler, user_id: str) -> None:
     if not message:
         handler.send_json({"error": "消息不能为空。"}, HTTPStatus.BAD_REQUEST)
         return
+    log.info("chat_stream start: user=%r msg=%r", user_id, message[:80])
     handler.send_response(HTTPStatus.OK)
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
     handler.send_header("Cache-Control", "no-cache")
-    handler.send_header("Connection", "keep-alive")
+    handler.send_header("Connection", "close")
     handler.send_header("X-Accel-Buffering", "no")
     handler.end_headers()
+    handler.close_connection = True  # 确保流结束后关闭连接
 
     async def _stream():
         try:
@@ -268,8 +270,9 @@ def handle_chat_stream(handler: MomentumHandler, user_id: str) -> None:
                 data = json.dumps(event, ensure_ascii=False)
                 handler.wfile.write(f"data: {data}\n\n".encode("utf-8"))
                 handler.wfile.flush()
+            log.info("chat_stream done: user=%r", user_id)
         except Exception as exc:
-            log.error("stream error: %s", exc)
+            log.error("stream error: %s", exc, exc_info=True)
             error_data = json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False)
             handler.wfile.write(f"data: {error_data}\n\n".encode("utf-8"))
             handler.wfile.flush()

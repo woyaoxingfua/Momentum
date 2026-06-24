@@ -32,6 +32,7 @@ def _require_auth(handler: MomentumHandler):
 class MomentumHandler(BaseHTTPRequestHandler):
     db_path: Path
     _last_status: int = 200
+    protocol_version = "HTTP/1.1"  # SSE 流式输出需要 HTTP/1.1
 
     def handle_one_request(self) -> None:
         try:

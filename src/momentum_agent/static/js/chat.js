@@ -174,8 +174,16 @@ async function handleStreamResponse(response, agentItem) {
   let fullText = "";
   let toolIndicator = null;
 
-  // 流式渲染：收到每个 chunk 都立即渲染（体验更好）
-  // 但 markdown 解析器需要能处理不完整的格式
+  // 检查是否移动端
+  const isMobile = window.getComputedStyle(document.querySelector(".coach")).display === "none";
+  const mobileLog = document.getElementById("mobileChatLog");
+
+  function syncMobile() {
+    if (isMobile && mobileLog && chatLog) {
+      mobileLog.innerHTML = chatLog.innerHTML;
+      mobileLog.scrollTop = mobileLog.scrollHeight;
+    }
+  }
 
   while (true) {
     const { done, value } = await reader.read();
@@ -191,32 +199,30 @@ async function handleStreamResponse(response, agentItem) {
           const event = JSON.parse(line.slice(6));
 
           if (event.type === "tool_start") {
-            // 显示工具调用指示器
             if (toolIndicator) toolIndicator.remove();
             toolIndicator = createToolIndicator(event.name);
             agentItem.appendChild(toolIndicator);
             chatLog.scrollTop = chatLog.scrollHeight;
+            syncMobile();
           } else if (event.type === "tool_end") {
-            // 移除工具指示器
             if (toolIndicator) {
               toolIndicator.remove();
               toolIndicator = null;
             }
           } else if (event.type === "chunk") {
             fullText += event.text;
-            // 移除工具指示器（如果有文本输出）
             if (toolIndicator) {
               toolIndicator.remove();
               toolIndicator = null;
             }
-            // 流式渲染：立即更新显示
             agentItem.innerHTML = renderMarkdown(fullText || "…");
             chatLog.scrollTop = chatLog.scrollHeight;
+            syncMobile();
           } else if (event.type === "error") {
             fullText = event.message || "出错了";
             agentItem.innerHTML = renderMarkdown(fullText);
+            syncMobile();
           } else if (event.type === "done") {
-            // 流结束
             if (toolIndicator) {
               toolIndicator.remove();
               toolIndicator = null;
@@ -224,6 +230,7 @@ async function handleStreamResponse(response, agentItem) {
             if (!fullText) {
               agentItem.innerHTML = renderMarkdown("…");
             }
+            syncMobile();
           }
         } catch {
           // skip malformed lines
@@ -277,6 +284,20 @@ export async function sendToAgent(message) {
 
   const agentItem = addMessage("agent", "…");
 
+  // 移动端：打开 Agent 面板
+  const isMobile = window.getComputedStyle(document.querySelector(".coach")).display === "none";
+  if (isMobile) {
+    const mobileChatPanel = document.getElementById("mobileChatPanel");
+    if (mobileChatPanel) {
+      // 打开面板
+      document.querySelectorAll(".mobile-panel").forEach(p => p.classList.remove("open"));
+      document.querySelectorAll(".mobile-nav-item").forEach(b => b.classList.remove("active"));
+      mobileChatPanel.classList.add("open");
+      const agentNavBtn = document.querySelector('.mobile-nav-item[data-panel="chat"]');
+      if (agentNavBtn) agentNavBtn.classList.add("active");
+    }
+  }
+
   try {
     const token = localStorage.getItem("momentum_token");
     const headers = { "Content-Type": "application/json" };
@@ -302,6 +323,15 @@ export async function sendToAgent(message) {
     await handleStreamResponse(response, agentItem);
   } catch (err) {
     agentItem.textContent = `连接失败：${err.message}`;
+  }
+
+  // 移动端：同步聊天记录
+  if (isMobile) {
+    const mobileLog = document.getElementById("mobileChatLog");
+    if (mobileLog && chatLog) {
+      mobileLog.innerHTML = chatLog.innerHTML;
+      mobileLog.scrollTop = mobileLog.scrollHeight;
+    }
   }
 
   if (onAfterChat) await onAfterChat();
