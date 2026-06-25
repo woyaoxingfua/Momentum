@@ -1,7 +1,3 @@
-"""
-专注与统计工具 — 让 Agent 能智能推荐任务和提供数据统计。
-"""
-import json
 from typing import TYPE_CHECKING
 from agents import function_tool
 
@@ -9,13 +5,10 @@ if TYPE_CHECKING:
     from ...storage import TaskStore
 
 
-def _to_json(obj) -> str:
-    """将对象转换为 JSON 字符串，确保工具输出为文本格式"""
-    return json.dumps(obj, ensure_ascii=False, default=str)
-
-
 def create_focus_tools(store: 'TaskStore', user_id: str):
-    """创建专注模式和统计相关的工具函数。"""
+    from ...context import build_user_context, ranked_tasks, task_score
+    from ...models import TaskStatus
+    from ._common import _to_json, _task_brief, _read_preferences
 
     @function_tool
     def get_next_best_task() -> str:
@@ -24,9 +17,6 @@ def create_focus_tools(store: 'TaskStore', user_id: str):
         基于优先级、截止时间、用户精力和可用时间综合评分，
         返回最值得现在做的单个任务及推荐理由。
         """
-        from ...context import build_user_context, ranked_tasks, task_score
-        from ...models import TaskStatus
-
         tasks = store.list_tasks(TaskStatus.TODO, user_id=user_id)
         doing = store.list_tasks(TaskStatus.DOING, user_id=user_id)
         all_open = tasks + doing
@@ -78,7 +68,6 @@ def create_focus_tools(store: 'TaskStore', user_id: str):
     @function_tool
     def get_tasks_due_today() -> str:
         """获取今天到期的任务列表。"""
-        from ...models import TaskStatus
         from datetime import datetime
 
         now = datetime.now().astimezone()
@@ -96,7 +85,6 @@ def create_focus_tools(store: 'TaskStore', user_id: str):
     @function_tool
     def get_tasks_due_this_week() -> str:
         """获取本周到期的任务列表。"""
-        from ...models import TaskStatus
         from datetime import datetime, timedelta
 
         now = datetime.now().astimezone()
@@ -114,7 +102,6 @@ def create_focus_tools(store: 'TaskStore', user_id: str):
     @function_tool
     def get_overdue_tasks() -> str:
         """获取所有逾期未完成的任务。"""
-        from ...models import TaskStatus
         from datetime import datetime
 
         now = datetime.now().astimezone()
@@ -139,7 +126,6 @@ def create_focus_tools(store: 'TaskStore', user_id: str):
         Args:
             days: 统计天数（默认7天）
         """
-        from ...models import TaskStatus
         from datetime import datetime, timedelta
 
         now = datetime.now().astimezone()
@@ -175,8 +161,6 @@ def create_focus_tools(store: 'TaskStore', user_id: str):
     @function_tool
     def get_doing_tasks() -> str:
         """获取所有进行中的任务。"""
-        from ...models import TaskStatus
-
         tasks = store.list_tasks(TaskStatus.DOING, user_id=user_id)
         return _to_json([_task_brief(t) for t in tasks])
 
@@ -188,32 +172,3 @@ def create_focus_tools(store: 'TaskStore', user_id: str):
         get_completion_stats,
         get_doing_tasks,
     ]
-
-
-def _task_brief(t) -> dict:
-    return {
-        "id": t.id,
-        "title": t.title,
-        "status": t.status.value,
-        "priority": t.priority.value,
-        "due_at": t.due_at.isoformat() if t.due_at else None,
-        "estimated_minutes": t.estimated_minutes,
-        "parent_task_id": t.parent_task_id,
-        "tags": t.tags,
-    }
-
-
-def _read_preferences(store: 'TaskStore', user_id: str) -> dict[str, object]:
-    """从用户配置中读取偏好设置。"""
-    memory = store.get_all_memory(user_id=user_id)
-    prefs: dict[str, object] = {}
-    if "daily_capacity_minutes" in memory:
-        try:
-            prefs["daily_capacity_minutes"] = int(memory["daily_capacity_minutes"])
-        except ValueError:
-            pass
-    if "working_hours_start" in memory:
-        prefs["working_hours_start"] = memory["working_hours_start"]
-    if "working_hours_end" in memory:
-        prefs["working_hours_end"] = memory["working_hours_end"]
-    return prefs

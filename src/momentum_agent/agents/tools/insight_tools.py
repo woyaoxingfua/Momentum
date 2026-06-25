@@ -1,5 +1,3 @@
-"""洞察工具 — 让 Agent 能访问行为分析数据。"""
-import json
 from typing import TYPE_CHECKING
 from agents import function_tool
 
@@ -7,13 +5,8 @@ if TYPE_CHECKING:
     from ...storage import TaskStore
 
 
-def _to_json(obj) -> str:
-    """将对象转换为 JSON 字符串，确保工具输出为文本格式"""
-    return json.dumps(obj, ensure_ascii=False, default=str)
-
-
 def create_insight_tools(store: 'TaskStore', user_id: str):
-    """创建洞察相关的工具函数。"""
+    from ._common import _to_json
 
     @function_tool
     def get_behavioral_profile() -> str:
@@ -51,10 +44,7 @@ def create_insight_tools(store: 'TaskStore', user_id: str):
 
     @function_tool
     def estimate_task_smart(title: str, priority: str = "medium") -> str:
-        """基于历史数据智能预估任务时间。
-
-        根据用户过去的完成记录，给出更准确的时间预估。
-        """
+        """基于历史数据智能预估任务时间。"""
         from ...insights import InsightsEngine
         engine = InsightsEngine(store)
         profile = engine.build_profile(user_id)

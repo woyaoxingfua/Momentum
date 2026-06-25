@@ -1,10 +1,4 @@
-"""
-Agent 构建器 - Agent Builder
-提供 Agent 创建和工具注册功能
-"""
-import json
 from typing import TYPE_CHECKING
-from pathlib import Path
 
 if TYPE_CHECKING:
     from ...storage import TaskStore
@@ -13,21 +7,7 @@ if TYPE_CHECKING:
 DEFAULT_USER_ID = "default"
 
 
-def _to_json(obj) -> str:
-    """将对象转换为 JSON 字符串，确保工具输出为文本格式"""
-    return json.dumps(obj, ensure_ascii=False, default=str)
-
-
 def create_agent_tools(store: 'TaskStore', *, user_id: str = DEFAULT_USER_ID):
-    """创建所有 Agent 工具
-
-    Args:
-        store: 任务存储实例
-        user_id: 用户ID
-
-    Returns:
-        工具函数列表
-    """
     from .tools import (
         create_task_tools,
         create_subtask_tools,
@@ -38,6 +18,7 @@ def create_agent_tools(store: 'TaskStore', *, user_id: str = DEFAULT_USER_ID):
         create_focus_tools,
     )
     from agents import function_tool
+    from .tools._common import _to_json, _read_preferences
 
     tools = []
 
@@ -60,18 +41,7 @@ def create_agent_tools(store: 'TaskStore', *, user_id: str = DEFAULT_USER_ID):
         """获取用户上下文"""
         from ...context import build_user_context
 
-        memory = store.get_all_memory(user_id=user_id)
-        prefs: dict[str, object] = {}
-        if "daily_capacity_minutes" in memory:
-            try:
-                prefs["daily_capacity_minutes"] = int(memory["daily_capacity_minutes"])
-            except ValueError:
-                pass
-        if "working_hours_start" in memory:
-            prefs["working_hours_start"] = memory["working_hours_start"]
-        if "working_hours_end" in memory:
-            prefs["working_hours_end"] = memory["working_hours_end"]
-
+        prefs = _read_preferences(store, user_id)
         context = build_user_context(store.list_tasks(None, user_id=user_id), **prefs)
         return _to_json({
             "now": context.now.isoformat(),
@@ -82,11 +52,7 @@ def create_agent_tools(store: 'TaskStore', *, user_id: str = DEFAULT_USER_ID):
 
     @function_tool
     def save_note(content: str) -> str:
-        """保存笔记
-
-        Args:
-            content: 笔记内容
-        """
+        """保存笔记"""
         from datetime import datetime
         key = f"agent_note_{int(datetime.now().timestamp())}"
         store.set_memory(key, content, user_id=user_id)
@@ -105,11 +71,7 @@ def create_agent_tools(store: 'TaskStore', *, user_id: str = DEFAULT_USER_ID):
 
     @function_tool
     def get_tasks_by_tag(tag: str) -> str:
-        """获取指定标签的任务
-
-        Args:
-            tag: 标签名称
-        """
+        """获取指定标签的任务"""
         tasks = store.get_tasks_by_tag(tag, user_id=user_id)
         return _to_json([
             {
@@ -125,12 +87,7 @@ def create_agent_tools(store: 'TaskStore', *, user_id: str = DEFAULT_USER_ID):
 
     @function_tool
     def add_tags_to_task(task_id: int, tags: list[str]) -> str:
-        """为任务添加标签
-
-        Args:
-            task_id: 任务ID
-            tags: 标签列表
-        """
+        """为任务添加标签"""
         task = store._get_task(task_id)
         if not task or (task.user_id and task.user_id != user_id):
             return f"任务 #{task_id} 不存在或不属于你"
@@ -146,22 +103,14 @@ def create_agent_tools(store: 'TaskStore', *, user_id: str = DEFAULT_USER_ID):
 
     @function_tool
     def batch_complete_tasks(task_ids: list[int]) -> str:
-        """批量完成任务
-
-        Args:
-            task_ids: 任务ID列表
-        """
+        """批量完成任务"""
         from ...models import TaskStatus
         count = store.batch_update_status(task_ids, TaskStatus.DONE, user_id=user_id)
         return f"已完成 {count} 个任务"
 
     @function_tool
     def batch_start_tasks(task_ids: list[int]) -> str:
-        """批量开始任务
-
-        Args:
-            task_ids: 任务ID列表
-        """
+        """批量开始任务"""
         from ...models import TaskStatus
         count = store.batch_update_status(task_ids, TaskStatus.DOING, user_id=user_id)
         return f"已开始 {count} 个任务"

@@ -1,7 +1,3 @@
-"""
-Agent 模块 - Agent Module
-提供 AI Agent 相关的功能
-"""
 from .agent import create_agent_tools
 from .tools import (
     create_task_tools,

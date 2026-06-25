@@ -389,7 +389,7 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
         create_weather_tools, create_heartbeat_tools,
         create_insight_tools, create_focus_tools,
     )
-    from .agents.agent import _to_json
+    from .agents.tools._common import _to_json
 
     model = OpenAIChatCompletionsModel(model=provider.model, openai_client=openai_client)
     model_settings = build_model_settings(provider)

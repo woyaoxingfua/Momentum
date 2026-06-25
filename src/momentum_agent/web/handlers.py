@@ -405,61 +405,44 @@ def handle_get_heartbeat_suggestion(handler: MomentumHandler, user_id: str) -> N
 
 # ── 天气 & 位置 ──────────────────────────────────────────────────
 
-_location_service = None
-
-
-def _get_location_service():
-    global _location_service
-    if _location_service is None:
-        from ..services.location import LocationService
-        _location_service = LocationService()
-    return _location_service
-
 
 def handle_get_weather(handler: MomentumHandler, user_id: str, parsed) -> None:
-    import random
+    from ..services import weather as w
     from datetime import datetime
     query = parse_qs(parsed.query)
     city = query.get("city", [None])[0]
     if not city:
         saved_city = handler.store.get_memory("user_location", user_id=user_id)
         city = saved_city or "北京"
-    loc_info = _get_location_service().get_location_info(city)
-    city_info = {"lat": loc_info["latitude"], "lon": loc_info["longitude"], "country": loc_info["country"]}
-    conditions = [
-        ("Clear", "晴朗", "☀️"), ("Partly Cloudy", "多云", "⛅"),
-        ("Cloudy", "阴天", "☁️"), ("Light Rain", "小雨", "🌦️"),
-        ("Rain", "中雨", "🌧️"), ("Thunderstorm", "雷阵雨", "⛈️"),
-        ("Snow", "小雪", "🌨️"), ("Fog", "雾", "🌫️"),
-    ]
-    condition, condition_cn, emoji = random.choice(conditions)
-    temp = random.randint(5, 35)
-    recommendations = []
-    if temp < 10:
-        recommendations.append("注意保暖")
-    elif temp > 30:
-        recommendations.append("注意防暑")
-    if "Rain" in condition:
-        recommendations.append("记得带伞")
+    data = w.get_weather(city)
+    loc = w.get_location(city)
     handler.send_json({
-        "city": city, "country": city_info["country"],
-        "temperature": temp, "condition": condition,
-        "condition_cn": condition_cn, "emoji": emoji,
-        "recommendations": recommendations,
+        "city": data["city"],
+        "country": "",
+        "temperature": data["temperature"],
+        "condition": data["condition"],
+        "condition_cn": data["condition_cn"],
+        "emoji": data["emoji"],
+        "recommendations": data["tips"],
+        "latitude": loc["latitude"],
+        "longitude": loc["longitude"],
         "updated_at": datetime.now().isoformat(),
     })
 
 
 def handle_get_location(handler: MomentumHandler, user_id: str, parsed) -> None:
+    from ..services import weather as w
     query = parse_qs(parsed.query)
     city = query.get("city", [None])[0]
     if not city:
         saved_city = handler.store.get_memory("user_location", user_id=user_id)
         city = saved_city or "北京"
-    info = _get_location_service().get_location_info(city)
+    info = w.get_location(city)
     handler.send_json({
-        "city": info["city"], "country": info["country"],
-        "latitude": info["latitude"], "longitude": info["longitude"],
+        "city": info["city"],
+        "country": "",
+        "latitude": info["latitude"],
+        "longitude": info["longitude"],
     })
 
 
