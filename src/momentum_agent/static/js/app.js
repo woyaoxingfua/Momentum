@@ -273,6 +273,9 @@ function syncMobileSettings() {
     ["mobileConfigCapacity", "configCapacity"],
     ["mobileConfigWorkStart", "configWorkStart"],
     ["mobileConfigWorkEnd", "configWorkEnd"],
+    ["mobileConfigHeartbeatStart", "configHeartbeatStart"],
+    ["mobileConfigHeartbeatEnd", "configHeartbeatEnd"],
+    ["mobileConfigHeartbeatInterval", "configHeartbeatInterval"],
   ];
   pairs.forEach(([mob, desk]) => {
     const src = document.getElementById(desk);
@@ -399,6 +402,9 @@ function initMobileNav() {
         ["configCapacity", "mobileConfigCapacity"],
         ["configWorkStart", "mobileConfigWorkStart"],
         ["configWorkEnd", "mobileConfigWorkEnd"],
+        ["configHeartbeatStart", "mobileConfigHeartbeatStart"],
+        ["configHeartbeatEnd", "mobileConfigHeartbeatEnd"],
+        ["configHeartbeatInterval", "mobileConfigHeartbeatInterval"],
       ];
       pairs.forEach(([desk, mob]) => {
         const src = document.getElementById(mob);

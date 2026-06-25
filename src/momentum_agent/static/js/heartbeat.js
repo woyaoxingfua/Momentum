@@ -18,20 +18,33 @@ export async function loadHeartbeatConfig() {
   try {
     const payload = await requestJson("/api/heartbeat/config");
     heartbeatConfig = payload.config;
-    
-    if (elements.configHeartbeatEnabled) {
-      elements.configHeartbeatEnabled.checked = heartbeatConfig.enabled;
-    }
-    if (elements.configHeartbeatStart) {
-      elements.configHeartbeatStart.value = String(heartbeatConfig.start_hour).padStart(2, "0") + ":00";
-    }
-    if (elements.configHeartbeatEnd) {
-      elements.configHeartbeatEnd.value = String(heartbeatConfig.end_hour).padStart(2, "0") + ":00";
-    }
-    if (elements.configHeartbeatInterval) {
-      elements.configHeartbeatInterval.value = heartbeatConfig.interval_hours;
-    }
-    
+
+    const ids = [
+      "configHeartbeatEnabled",
+      "mobileConfigHeartbeatEnabled",
+    ];
+    ids.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.checked = heartbeatConfig.enabled;
+    });
+
+    const startValue = String(heartbeatConfig.start_hour).padStart(2, "0") + ":00";
+    ["configHeartbeatStart", "mobileConfigHeartbeatStart"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = startValue;
+    });
+
+    const endValue = String(heartbeatConfig.end_hour).padStart(2, "0") + ":00";
+    ["configHeartbeatEnd", "mobileConfigHeartbeatEnd"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = endValue;
+    });
+
+    ["configHeartbeatInterval", "mobileConfigHeartbeatInterval"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = heartbeatConfig.interval_hours;
+    });
+
     return heartbeatConfig;
   } catch (e) {
     console.warn("Failed to load heartbeat config", e);

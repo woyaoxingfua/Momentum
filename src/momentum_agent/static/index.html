@@ -238,6 +238,15 @@
             <input id="mobileConfigHeartbeatEnabled" type="checkbox" />
             启用主动提醒
           </label>
+          <label>提醒开始时间
+            <input id="mobileConfigHeartbeatStart" type="time" value="09:00" />
+          </label>
+          <label>提醒结束时间
+            <input id="mobileConfigHeartbeatEnd" type="time" value="21:00" />
+          </label>
+          <label>提醒间隔（小时）
+            <input id="mobileConfigHeartbeatInterval" type="number" min="1" max="24" value="4" />
+          </label>
           <button id="mobileConfigSaveButton" class="primary">保存设置</button>
         </div>
       </div>

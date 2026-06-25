@@ -432,23 +432,15 @@ def handle_get_heartbeat_suggestion(handler: MomentumHandler, user_id: str) -> N
 
 # ── 天气 & 位置 ──────────────────────────────────────────────────
 
-CITY_DATA = {
-    "北京": {"lat": 39.9042, "lon": 116.4074, "country": "中国"},
-    "上海": {"lat": 31.2304, "lon": 121.4737, "country": "中国"},
-    "广州": {"lat": 23.1291, "lon": 113.2644, "country": "中国"},
-    "深圳": {"lat": 22.5431, "lon": 114.0579, "country": "中国"},
-    "成都": {"lat": 30.5728, "lon": 104.0668, "country": "中国"},
-    "杭州": {"lat": 30.2741, "lon": 120.1551, "country": "中国"},
-    "武汉": {"lat": 30.5928, "lon": 114.3055, "country": "中国"},
-    "西安": {"lat": 34.3416, "lon": 108.9398, "country": "中国"},
-    "南京": {"lat": 32.0603, "lon": 118.7969, "country": "中国"},
-    "重庆": {"lat": 29.4316, "lon": 106.9123, "country": "中国"},
-    "tokyo": {"lat": 35.6762, "lon": 139.6503, "country": "日本"},
-    "new york": {"lat": 40.7128, "lon": -74.0060, "country": "美国"},
-    "london": {"lat": 51.5074, "lon": -0.1278, "country": "英国"},
-    "paris": {"lat": 48.8566, "lon": 2.3522, "country": "法国"},
-    "singapore": {"lat": 1.3521, "lon": 103.8198, "country": "新加坡"},
-}
+_location_service = None
+
+
+def _get_location_service():
+    global _location_service
+    if _location_service is None:
+        from ..services.location import LocationService
+        _location_service = LocationService()
+    return _location_service
 
 
 def handle_get_weather(handler: MomentumHandler, user_id: str, parsed) -> None:
@@ -460,7 +452,8 @@ def handle_get_weather(handler: MomentumHandler, user_id: str, parsed) -> None:
     if not city:
         saved_city = TaskStore(handler.db_path).get_memory("user_location", user_id=user_id)
         city = saved_city or "北京"
-    city_info = CITY_DATA.get(city.lower(), CITY_DATA.get("北京"))
+    loc_info = _get_location_service().get_location_info(city)
+    city_info = {"lat": loc_info["latitude"], "lon": loc_info["longitude"], "country": loc_info["country"]}
     conditions = [
         ("Clear", "晴朗", "☀️"), ("Partly Cloudy", "多云", "⛅"),
         ("Cloudy", "阴天", "☁️"), ("Light Rain", "小雨", "🌦️"),
@@ -492,10 +485,10 @@ def handle_get_location(handler: MomentumHandler, user_id: str, parsed) -> None:
     if not city:
         saved_city = TaskStore(handler.db_path).get_memory("user_location", user_id=user_id)
         city = saved_city or "北京"
-    info = CITY_DATA.get(city.lower(), CITY_DATA.get("北京"))
+    info = _get_location_service().get_location_info(city)
     handler.send_json({
-        "city": city, "country": info["country"],
-        "latitude": info["lat"], "longitude": info["lon"],
+        "city": info["city"], "country": info["country"],
+        "latitude": info["latitude"], "longitude": info["longitude"],
     })
 
 

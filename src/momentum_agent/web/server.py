@@ -69,6 +69,26 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
     # ── GET ──────────────────────────────────────────────────────
 
+    # ── 静态文件路由表 ─────────────────────────────────────────────
+    STATIC_MAP = {
+        "/": ("index.html", "text/html; charset=utf-8"),
+        "/login.html": ("login.html", "text/html; charset=utf-8"),
+        "/app.css": ("app.css", "text/css; charset=utf-8"),
+        "/manifest.json": ("manifest.json", "application/manifest+json; charset=utf-8"),
+        "/icon.svg": ("icon.svg", "image/svg+xml"),
+    }
+
+    def _send_static_or_none(self, path: str) -> bool:
+        from . import handlers
+        if path in self.STATIC_MAP:
+            name, ct = self.STATIC_MAP[path]
+            handlers.send_static(self, name, ct)
+            return True
+        if path.startswith("/js/"):
+            handlers.send_static(self, f"js/{path.split('/')[-1]}", "text/javascript; charset=utf-8")
+            return True
+        return False
+
     def do_GET(self) -> None:
         from . import handlers
         t0 = time.time()
@@ -78,19 +98,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 path = parsed.path
 
                 # 静态文件 — 无需认证
-                STATIC_MAP = {
-                    "/": ("index.html", "text/html; charset=utf-8"),
-                    "/login.html": ("login.html", "text/html; charset=utf-8"),
-                    "/app.css": ("app.css", "text/css; charset=utf-8"),
-                    "/manifest.json": ("manifest.json", "application/manifest+json; charset=utf-8"),
-                    "/icon.svg": ("icon.svg", "image/svg+xml"),
-                }
-                if path in STATIC_MAP:
-                    name, ct = STATIC_MAP[path]
-                    handlers.send_static(self, name, ct)
-                    return
-                if path.startswith("/js/"):
-                    handlers.send_static(self, f"js/{path.split('/')[-1]}", "text/javascript; charset=utf-8")
+                if self._send_static_or_none(path):
                     return
 
                 # API — 需要认证
@@ -100,6 +108,29 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
                 query = parse_qs(parsed.query)
 
+                # 精确匹配路由表
+                exact_routes = {
+                    "/api/tags": handlers.handle_get_all_tags,
+                    "/api/heartbeat/config": handlers.handle_get_heartbeat_config,
+                    "/api/heartbeat/suggestion": handlers.handle_get_heartbeat_suggestion,
+                    "/api/user/location": handlers.handle_get_user_location,
+                    "/api/export": handlers.handle_export,
+                    "/api/advice": handlers.handle_advice,
+                    "/api/review": handlers.handle_review,
+                    "/api/provider": handlers.handle_provider,
+                    "/api/config": handlers.handle_get_config,
+                }
+
+                # 前缀匹配路由表 (suffix -> handler)
+                prefix_routes = {
+                    "/subtasks": handlers.handle_get_subtasks,
+                    "/with-subtasks": handlers.handle_get_task_with_subtasks,
+                    "/dependencies": handlers.handle_get_dependencies,
+                    "/dependents": handlers.handle_get_dependents,
+                    "/relations": handlers.handle_get_task_relations,
+                    "/is-blocked": handlers.handle_is_task_blocked,
+                }
+
                 if path == "/api/tasks":
                     if "q" in query:
                         handlers.handle_search_tasks(self, query["q"][0], user_id)
@@ -107,42 +138,20 @@ class MomentumHandler(BaseHTTPRequestHandler):
                         handlers.handle_get_tasks_by_tag(self, query["tag"][0], user_id)
                     else:
                         handlers.handle_list_tasks(self, query.get("status", ["todo"])[0], user_id)
-                elif path == "/api/tags":
-                    handlers.handle_get_all_tags(self, user_id)
-                elif path == "/api/heartbeat/config":
-                    handlers.handle_get_heartbeat_config(self, user_id)
-                elif path == "/api/heartbeat/suggestion":
-                    handlers.handle_get_heartbeat_suggestion(self, user_id)
-                elif path == "/api/user/location":
-                    handlers.handle_get_user_location(self, user_id)
                 elif path == "/api/weather":
                     handlers.handle_get_weather(self, user_id, parsed)
                 elif path == "/api/location":
                     handlers.handle_get_location(self, user_id, parsed)
-                elif path.startswith("/api/tasks/") and path.endswith("/subtasks"):
-                    handlers.handle_get_subtasks(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/with-subtasks"):
-                    handlers.handle_get_task_with_subtasks(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/dependencies"):
-                    handlers.handle_get_dependencies(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/dependents"):
-                    handlers.handle_get_dependents(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/relations"):
-                    handlers.handle_get_task_relations(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/is-blocked"):
-                    handlers.handle_is_task_blocked(self, path, user_id)
-                elif path == "/api/export":
-                    handlers.handle_export(self, user_id)
-                elif path == "/api/advice":
-                    handlers.handle_advice(self, user_id)
-                elif path == "/api/review":
-                    handlers.handle_review(self, user_id)
-                elif path == "/api/provider":
-                    handlers.handle_provider(self)
-                elif path == "/api/config":
-                    handlers.handle_get_config(self, user_id)
                 elif path == "/api/me":
                     self.send_json({"user_id": user_id})
+                elif path in exact_routes:
+                    exact_routes[path](self, user_id)
+                elif path.startswith("/api/tasks/"):
+                    suffix = path.rsplit("/", 1)[-1]
+                    if suffix in prefix_routes:
+                        prefix_routes[suffix](self, path, user_id)
+                    else:
+                        self.send_error(HTTPStatus.NOT_FOUND)
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
             finally:
@@ -159,14 +168,13 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 path = parsed.path
 
                 # 认证端点 — 无需认证
-                if path == "/api/register":
-                    handlers.handle_register(self)
-                    return
-                if path == "/api/login":
-                    handlers.handle_login(self)
-                    return
-                if path == "/api/logout":
-                    handlers.handle_logout(self)
+                public_routes = {
+                    "/api/register": handlers.handle_register,
+                    "/api/login": handlers.handle_login,
+                    "/api/logout": handlers.handle_logout,
+                }
+                if path in public_routes:
+                    public_routes[path](self)
                     return
 
                 # 其他端点 — 需要认证
@@ -174,48 +182,41 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 if user_id is None:
                     return
 
-                if path == "/api/tasks":
-                    handlers.handle_create_task(self, user_id)
-                elif path == "/api/plan":
-                    handlers.handle_create_plan(self, user_id)
-                elif path == "/api/change-password":
-                    handlers.handle_change_password(self, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/done"):
-                    handlers.handle_done_task(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/postpone"):
-                    handlers.handle_postpone_task(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/drop"):
-                    handlers.handle_drop_task(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/start"):
-                    handlers.handle_start_task(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/reopen"):
-                    handlers.handle_reopen_task(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/subtasks"):
-                    handlers.handle_create_subtask(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/bulk-subtasks"):
-                    handlers.handle_bulk_create_subtasks(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/dependencies"):
-                    handlers.handle_add_dependency(self, path, user_id)
-                elif path.startswith("/api/tasks/") and path.endswith("/relations"):
-                    handlers.handle_add_task_relation(self, path, user_id)
-                elif path == "/api/batch/update-status":
-                    handlers.handle_batch_update_status(self, user_id)
-                elif path == "/api/batch/add-tags":
-                    handlers.handle_batch_add_tags(self, user_id)
-                elif path == "/api/heartbeat/config":
-                    handlers.handle_set_heartbeat_config(self, user_id)
-                elif path == "/api/user/location":
-                    handlers.handle_set_user_location(self, user_id)
-                elif path == "/api/chat":
-                    handlers.handle_chat(self, user_id)
-                elif path == "/api/chat/stream":
-                    handlers.handle_chat_stream(self, user_id)
-                elif path == "/api/chat/clear":
-                    handlers.handle_chat_clear(self, user_id)
-                elif path == "/api/config":
-                    handlers.handle_set_config(self, user_id)
-                elif path == "/api/import":
-                    handlers.handle_import(self, user_id)
+                exact_routes = {
+                    "/api/tasks": handlers.handle_create_task,
+                    "/api/plan": handlers.handle_create_plan,
+                    "/api/change-password": handlers.handle_change_password,
+                    "/api/batch/update-status": handlers.handle_batch_update_status,
+                    "/api/batch/add-tags": handlers.handle_batch_add_tags,
+                    "/api/heartbeat/config": handlers.handle_set_heartbeat_config,
+                    "/api/user/location": handlers.handle_set_user_location,
+                    "/api/chat": handlers.handle_chat,
+                    "/api/chat/stream": handlers.handle_chat_stream,
+                    "/api/chat/clear": handlers.handle_chat_clear,
+                    "/api/config": handlers.handle_set_config,
+                    "/api/import": handlers.handle_import,
+                }
+
+                prefix_routes = {
+                    "/done": handlers.handle_done_task,
+                    "/postpone": handlers.handle_postpone_task,
+                    "/drop": handlers.handle_drop_task,
+                    "/start": handlers.handle_start_task,
+                    "/reopen": handlers.handle_reopen_task,
+                    "/subtasks": handlers.handle_create_subtask,
+                    "/bulk-subtasks": handlers.handle_bulk_create_subtasks,
+                    "/dependencies": handlers.handle_add_dependency,
+                    "/relations": handlers.handle_add_task_relation,
+                }
+
+                if path in exact_routes:
+                    exact_routes[path](self, user_id)
+                elif path.startswith("/api/tasks/"):
+                    suffix = path.rsplit("/", 1)[-1]
+                    if suffix in prefix_routes:
+                        prefix_routes[suffix](self, path, user_id)
+                    else:
+                        self.send_error(HTTPStatus.NOT_FOUND)
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
             finally:
@@ -232,8 +233,13 @@ class MomentumHandler(BaseHTTPRequestHandler):
             return
         with request_context():
             try:
-                if parsed.path.startswith("/api/tasks/") and "/done" not in parsed.path and "/postpone" not in parsed.path and "/drop" not in parsed.path:
-                    handlers.handle_edit_task(self, parsed.path, user_id)
+                path = parsed.path
+                # PUT /api/tasks/<id> 编辑任务；需排除 POST 专用的 action 后缀
+                if (
+                    path.startswith("/api/tasks/")
+                    and path.rsplit("/", 1)[-1] not in {"done", "postpone", "drop", "start", "reopen", "subtasks", "bulk-subtasks", "dependencies", "relations"}
+                ):
+                    handlers.handle_edit_task(self, path, user_id)
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
             finally:

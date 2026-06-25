@@ -1,21 +1,34 @@
+const REQUEST_TIMEOUT_MS = 30000;
+
 export async function requestJson(url, options = {}) {
   const token = localStorage.getItem("momentum_token");
   const headers = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const response = await fetch(url, { headers, ...options });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { headers, ...options, signal: controller.signal });
+    clearTimeout(timeoutId);
 
-  if (response.status === 401) {
-    localStorage.removeItem("momentum_token");
-    window.location.href = "/login.html";
-    throw new Error("未登录");
-  }
+    if (response.status === 401) {
+      localStorage.removeItem("momentum_token");
+      window.location.href = "/login.html";
+      throw new Error("未登录");
+    }
 
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || "请求失败");
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "请求失败");
+    }
+    return payload;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error("请求超时，请检查网络或稍后重试");
+    }
+    throw err;
   }
-  return payload;
 }
 
 export async function logout() {
