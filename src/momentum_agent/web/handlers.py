@@ -653,3 +653,41 @@ def handle_is_task_blocked(handler: MomentumHandler, path: str, user_id: str) ->
         return
     is_blocked = handler.store.is_task_blocked(task_id, user_id=user_id)
     handler.send_json({"is_blocked": is_blocked})
+
+
+# ── 专注计时 ──────────────────────────────────────────────────────
+
+def handle_start_focus(handler: MomentumHandler, user_id: str) -> None:
+    """开始一个专注时段"""
+    payload = handler.read_json()
+    task_id = payload.get("task_id")
+    duration_minutes = int(payload.get("duration_minutes", 25))
+    if duration_minutes < 1 or duration_minutes > 120:
+        handler.send_json({"error": "时长需在 1-120 分钟之间"}, HTTPStatus.BAD_REQUEST)
+        return
+    from ..web.utils import encode_dt
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    handler.store.record_focus_session(task_id, duration_minutes, user_id=user_id)
+    handler.send_json({
+        "message": f"专注计时开始，{duration_minutes}分钟后提醒",
+        "started_at": now.isoformat(),
+        "duration_minutes": duration_minutes,
+    })
+
+
+def handle_get_focus_stats(handler: MomentumHandler, user_id: str) -> None:
+    """获取专注统计数据"""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    sessions = handler.store.get_focus_sessions(user_id=user_id)
+    recent = [s for s in sessions if s["started_at"] >= week_ago]
+    total_minutes = sum(s.get("duration_minutes", 0) for s in recent)
+    total_sessions = len(recent)
+    handler.send_json({
+        "sessions": recent,
+        "total_minutes_today": sum(s.get("duration_minutes", 0) for s in sessions if s["started_at"] >= now.replace(hour=0, minute=0, second=0)),
+        "total_minutes_week": total_minutes,
+        "total_sessions_week": total_sessions,
+    })

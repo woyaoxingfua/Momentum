@@ -150,6 +150,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/chat/clear": _handlers.handle_chat_clear,
         "/api/config": _handlers.handle_set_config,
         "/api/import": _handlers.handle_import,
+        "/api/focus/start": _handlers.handle_start_focus,
+        "/api/focus/stats": _handlers.handle_get_focus_stats,
     }
 
     POST_PREFIX_ROUTES = {

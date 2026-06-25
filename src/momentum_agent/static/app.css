@@ -823,6 +823,104 @@ dialog::backdrop { background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
 }
 .chat-form input:focus { border-color: var(--accent); }
 
+/* Focus Timer */
+.focus-timer {
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.focus-timer-header {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  color: var(--accent);
+  font-size: 11px; font-weight: 600;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+.focus-timer-header:hover { background: var(--surface-2); }
+
+.focus-timer-body { padding: var(--space-3) var(--space-5); }
+
+.focus-timer-idle p {
+  font-size: 11px; color: var(--text-3);
+  margin-bottom: var(--space-2);
+  font-family: var(--font-serif);
+  font-style: italic;
+}
+
+.focus-task-select {
+  display: flex; gap: var(--space-2); margin-bottom: var(--space-2);
+}
+.focus-task-select select {
+  flex: 1; height: var(--input-h); padding: 0 var(--space-3);
+  border: 1px solid var(--border); background: var(--bg-2); color: var(--text);
+  outline: none; font-size: 12px;
+}
+.focus-task-select select:focus { border-color: var(--accent); }
+
+.focus-duration-select { display: flex; gap: var(--space-1); }
+
+.focus-dur-btn {
+  flex: 1; height: 28px; padding: 0 var(--space-2);
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-3);
+  font-size: 11px; font-weight: 500; cursor: pointer;
+  border-radius: 0; min-height: auto;
+  transition: all var(--transition);
+  font-family: var(--font-mono);
+}
+.focus-dur-btn:hover { border-color: var(--accent); color: var(--accent); }
+.focus-dur-btn.active {
+  background: var(--accent); border-color: var(--accent); color: var(--bg);
+}
+
+.focus-timer-running { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+
+.focus-countdown {
+  font-size: 40px; font-weight: 600; font-family: var(--font-mono);
+  color: var(--accent); letter-spacing: -0.02em;
+  line-height: 1;
+}
+.focus-current-task {
+  font-size: 12px; color: var(--text-3);
+  font-family: var(--font-serif); font-style: italic;
+  text-align: center; max-width: 100%;
+}
+
+.focus-progress-bar {
+  width: 100%; height: 3px; background: var(--border);
+}
+.focus-progress-fill {
+  height: 100%; background: var(--accent);
+  transition: width 1s linear;
+}
+
+.focus-actions { display: flex; gap: var(--space-2); }
+.focus-actions button { height: 30px; padding: 0 var(--space-3); font-size: 12px; }
+
+.focus-timer-break {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+}
+.focus-break-emoji { font-size: 28px; line-height: 1; }
+.focus-break-timer {
+  font-size: 28px; font-weight: 600; font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+.focus-timer-stats {
+  padding: var(--space-2) var(--space-5) var(--space-3);
+  font-size: 11px; color: var(--text-3);
+  font-family: var(--font-mono);
+  display: flex; gap: var(--space-3);
+}
+.focus-timer-stats span { display: flex; gap: var(--space-1); align-items: center; }
+
+.hidden { display: none !important; }
+
 /* Config Panel */
 .config-panel {
   margin-top: var(--space-3);

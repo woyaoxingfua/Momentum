@@ -530,6 +530,9 @@ function init() {
   // ── Mobile nav ──
   initMobileNav();
 
+  // Focus timer
+  import("./focus.js").then(({ focusInit }) => focusInit());
+
   // User info
   const user = localStorage.getItem("momentum_user");
   if (user) $("#currentUser").textContent = user;

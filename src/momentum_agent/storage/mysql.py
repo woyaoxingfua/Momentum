@@ -1135,6 +1135,51 @@ class MySQLTaskStore:
                 return False
         return True
 
+    # ── focus sessions / 专注记录 ─────────────────────────────────
+
+    def record_focus_session(
+        self,
+        task_id: int | None,
+        duration_minutes: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> None:
+        log.info("record_focus_session task=%s duration=%d user=%r", task_id, duration_minutes, user_id)
+        now = utcnow()
+        with self._connect() as conn:
+            self._execute(
+                conn,
+                "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (%s, %s, %s, %s)",
+                (task_id, "focus_session", f'{{"duration_minutes": {duration_minutes}}}', encode_dt(now)),
+            )
+
+    def get_focus_sessions(self, *, user_id: str = DEFAULT_USER) -> list[dict]:
+        import json
+        cutoff = (utcnow() - timedelta(days=30)).isoformat()
+        with self._connect() as conn:
+            cur = self._execute(
+                conn,
+                """
+                SELECT e.task_id, e.payload, e.created_at
+                FROM task_events e
+                INNER JOIN tasks t ON e.task_id = t.id
+                WHERE e.event_type = %s AND t.user_id = %s
+                AND e.created_at >= %s
+                ORDER BY e.created_at DESC
+                """,
+                ("focus_session", user_id, cutoff),
+            )
+            rows = cur.fetchall()
+        sessions = []
+        for row in rows:
+            payload = json.loads(row["payload"]) if row["payload"] else {}
+            sessions.append({
+                "task_id": row["task_id"],
+                "duration_minutes": payload.get("duration_minutes", 0),
+                "started_at": decode_dt(row["created_at"]) if row["created_at"] else None,
+            })
+        return sessions
+
 
 def _import_cursor_class(name: str) -> Any:
     """延迟导入 pymysql DictCursor，避免顶层导入失败。"""

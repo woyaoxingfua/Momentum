@@ -103,6 +103,52 @@
           <input id="chatInput" placeholder="让助手帮你拆分、安排或复盘" autocomplete="off" />
           <button class="primary" type="submit">发送</button>
         </form>
+
+        <!-- Focus Timer -->
+        <div class="focus-timer" id="focusTimer">
+          <div class="focus-timer-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+            <span>专注</span>
+          </div>
+          <div class="focus-timer-body" id="focusTimerBody">
+            <div class="focus-timer-idle" id="focusIdle">
+              <p>选择一个任务开始专注</p>
+              <div class="focus-task-select">
+                <select id="focusTaskSelect">
+                  <option value="">选择任务...</option>
+                </select>
+                <button id="focusStartBtn" type="button" class="primary" style="height: var(--input-h);">专注</button>
+              </div>
+              <div class="focus-duration-select">
+                <button type="button" class="focus-dur-btn active" data-min="25">25 分钟</button>
+                <button type="button" class="focus-dur-btn" data-min="45">45 分钟</button>
+                <button type="button" class="focus-dur-btn" data-min="60">60 分钟</button>
+              </div>
+            </div>
+            <div class="focus-timer-running hidden" id="focusRunning">
+              <div class="focus-countdown" id="focusCountdown">25:00</div>
+              <div class="focus-current-task" id="focusCurrentTask"></div>
+              <div class="focus-progress-bar">
+                <div class="focus-progress-fill" id="focusProgressFill"></div>
+              </div>
+              <div class="focus-actions">
+                <button type="button" id="focusPauseBtn" class="">暂停</button>
+                <button type="button" id="focusStopBtn" class="danger">结束</button>
+              </div>
+            </div>
+            <div class="focus-timer-break hidden" id="focusBreak">
+              <div class="focus-break-emoji">☕</div>
+              <p>专注完成！休息一下</p>
+              <div class="focus-break-timer" id="focusBreakCountdown">05:00</div>
+              <div class="focus-actions">
+                <button type="button" id="focusSkipBreakBtn" class="">跳过休息</button>
+                <button type="button" id="focusDoneBtn" class="primary">完成</button>
+              </div>
+            </div>
+          </div>
+          <div class="focus-timer-stats" id="focusStats"></div>
+        </div>
+
         <details class="config-panel">
           <summary>偏好设置</summary>
           <div class="config-form">

@@ -1028,6 +1028,54 @@ class SQLiteTaskStore:
                 return False
         return True
 
+    # ── focus sessions / 专注记录 ─────────────────────────────────
+
+    def record_focus_session(
+        self,
+        task_id: int | None,
+        duration_minutes: int,
+        *,
+        user_id: str = DEFAULT_USER,
+    ) -> None:
+        """记录一次专注时段"""
+        log.info("record_focus_session task=%s duration=%d user=%r", task_id, duration_minutes, user_id)
+        now = utcnow()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                (
+                    task_id,
+                    "focus_session",
+                    f'{{"duration_minutes": {duration_minutes}}}',
+                    encode_dt(now),
+                ),
+            )
+
+    def get_focus_sessions(self, *, user_id: str = DEFAULT_USER) -> list[dict]:
+        """获取用户所有专注记录（最近30天）"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT e.task_id, e.payload, e.created_at
+                FROM task_events e
+                INNER JOIN tasks t ON e.task_id = t.id
+                WHERE e.event_type = ? AND t.user_id = ?
+                AND e.created_at >= date('now', '-30 days')
+                ORDER BY e.created_at DESC
+                """,
+                ("focus_session", user_id),
+            ).fetchall()
+        import json
+        sessions = []
+        for row in rows:
+            payload = json.loads(row["payload"]) if row["payload"] else {}
+            sessions.append({
+                "task_id": row["task_id"],
+                "duration_minutes": payload.get("duration_minutes", 0),
+                "started_at": datetime.fromisoformat(row["created_at"]).astimezone() if row["created_at"] else None,
+            })
+        return sessions
+
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────
 
