@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator
 
-from .logger import get_logger, log_db_query, log_security_event
-from .models import Priority, Task, TaskStatus, TaskRelation, TaskRelationType
+from ..logger import get_logger, log_db_query, log_security_event
+from ..models import Priority, Task, TaskStatus, TaskRelation, TaskRelationType
 
 log = get_logger("storage")
 
@@ -15,7 +15,7 @@ log = get_logger("storage")
 SESSION_LIFETIME = timedelta(days=7)
 
 __all__ = [
-    "TaskStore",
+    "SQLiteTaskStore",
     "DEFAULT_USER",
     "utcnow",
     "encode_dt",
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS task_events (
 DEFAULT_USER = "default"
 
 
-class TaskStore:
+class SQLiteTaskStore:
     # 已初始化 schema 的数据库路径缓存，避免每次实例化都执行 migration
     _schema_initialized: set[str] = set()
 
@@ -97,7 +97,7 @@ class TaskStore:
 
     def _init_schema(self) -> None:
         key = str(self.db_path.resolve())
-        if key in TaskStore._schema_initialized:
+        if key in SQLiteTaskStore._schema_initialized:
             log.debug("schema already initialized for %s", self.db_path)
             return
         log.debug("initializing schema")
@@ -105,10 +105,10 @@ class TaskStore:
             conn.executescript(SCHEMA)
             self._migrate(conn)
             self._ensure_default_user(conn)
-        TaskStore._schema_initialized.add(key)
+        SQLiteTaskStore._schema_initialized.add(key)
 
     @classmethod
-    def ensure_schema(cls, db_path: str | Path) -> "TaskStore":
+    def ensure_schema(cls, db_path: str | Path) -> "SQLiteTaskStore":
         """应用启动时显式调用，确保 schema 已初始化。"""
         return cls(db_path)
 
@@ -127,7 +127,7 @@ class TaskStore:
             conn.close()
 
     def _ensure_default_user(self, conn: sqlite3.Connection) -> None:
-        from .auth import hash_password
+        from ..auth import hash_password
         existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if existing == 0:
             conn.execute(
@@ -138,7 +138,7 @@ class TaskStore:
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         # 迁移 users 表：添加 password_hash 列（兼容旧数据库）
-        from .auth import hash_password
+        from ..auth import hash_password
         user_cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
         if "password_hash" not in user_cols:
             log.info("migration: adding password_hash column to users")
@@ -166,14 +166,14 @@ class TaskStore:
             log.info("migration: adding expires_at column to sessions")
             conn.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
             # 给已有 session 一个默认过期时间：7 天后
-            from .auth import utcnow as auth_now
+            from ..auth import utcnow as auth_now
             default_expires = encode_dt(auth_now() + SESSION_LIFETIME)
             conn.execute("UPDATE sessions SET expires_at = ? WHERE expires_at IS NULL", (default_expires,))
 
     # ── auth ───────────────────────────────────────────────────────
 
     def register_user(self, user_id: str, display_name: str, password_hash: str) -> None:
-        from .auth import utcnow as auth_now
+        from ..auth import utcnow as auth_now
         log.info("register user=%r", user_id)
         with self._connect() as conn:
             conn.execute(
@@ -182,7 +182,7 @@ class TaskStore:
             )
 
     def login_user(self, user_id: str, password: str) -> str | None:
-        from .auth import generate_token, utcnow as auth_now, verify_password
+        from ..auth import generate_token, utcnow as auth_now, verify_password
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT password_hash FROM users WHERE id = ?", (user_id,)
@@ -203,7 +203,7 @@ class TaskStore:
         return token
 
     def validate_session(self, token: str) -> str | None:
-        from .auth import utcnow as auth_now
+        from ..auth import utcnow as auth_now
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT user_id, expires_at FROM sessions WHERE token = ?", (token,)
@@ -222,7 +222,7 @@ class TaskStore:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
     def change_password(self, user_id: str, old_password: str, new_password: str) -> bool:
-        from .auth import verify_password, hash_password
+        from ..auth import verify_password, hash_password
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT password_hash FROM users WHERE id = ?", (user_id,)

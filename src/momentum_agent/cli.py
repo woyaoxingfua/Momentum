@@ -24,7 +24,7 @@ from .agent_app import (
 from .config import DEFAULT_USER_ID, get_current_user
 from .logger import get_logger, init_from_env, setup_logging
 from .models import TaskStatus
-from .storage import TaskStore
+from .storage import TaskStore, create_task_store
 from .web import run_server
 
 log = get_logger("cli")
@@ -32,7 +32,9 @@ log = get_logger("cli")
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="momentum-agent")
-    parser.add_argument("--db", default=".momentum/tasks.db", help="SQLite database path.")
+    parser.add_argument("--db", "--database-url", dest="database_url",
+                        default=os.environ.get("MOMENTUM_DATABASE_URL", ".momentum/tasks.db"),
+                        help="Database URL (default: $MOMENTUM_DATABASE_URL or .momentum/tasks.db).")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging.")
     parser.add_argument("--log-file", type=Path, default=None, help="Override log file path (default: logs/momentum-YYYY-MM-DD.log).")
     parser.add_argument("--log-dir", type=Path, default=None, help="Override log directory (default: logs/).")
@@ -107,8 +109,8 @@ def main() -> None:
     if args.log_file or args.log_dir:
         setup_logging(log_file=args.log_file, log_dir=args.log_dir)
 
-    db_path = Path(args.db)
-    store = TaskStore(db_path)
+    database_url = args.database_url
+    store = create_task_store(database_url)
     user_id = get_current_user()
 
     log.info("command=%s user=%r", args.command, user_id)
@@ -169,10 +171,10 @@ def main() -> None:
         n = store.import_user_data(data, user_id=user_id)
         print(f"已导入 {n} 个任务。")
     elif args.command == "chat":
-        print(asyncio.run(run_agent_message(db_path, args.message, user_id=user_id)))
+        print(asyncio.run(run_agent_message(database_url, args.message, user_id=user_id)))
     elif args.command == "serve":
         log.info("starting server %s:%s", args.host, args.port)
-        run_server(db_path, host=args.host, port=args.port)
+        run_server(database_url, host=args.host, port=args.port)
 
 
 def print_tasks(store: TaskStore, status: TaskStatus, *, user_id: str = DEFAULT_USER_ID) -> None:

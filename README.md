@@ -102,7 +102,7 @@ momentum-agent serve --port 8765
 | 层 | 选型 |
 |---|---|
 | AI SDK | OpenAI Agents SDK |
-| 数据库 | SQLite（自动 schema 迁移） |
+| 数据库 | SQLite（默认）/ PostgreSQL（可选，适合多用户部署） |
 | Web 服务 | Python stdlib `http.server` |
 | 前端 | 原生 JS，零构建步骤 |
 | 认证 | PBKDF2-SHA256 + Session Token |
@@ -114,7 +114,10 @@ src/momentum_agent/
 ├── cli.py              # CLI 入口
 ├── web.py              # HTTP 服务 + REST API
 ├── agent_app.py        # Agent 核心逻辑
-├── storage.py          # SQLite 存储层
+├── storage/            # 可插拔存储层
+│   ├── sqlite.py       # SQLite 后端
+│   ├── postgresql.py   # PostgreSQL 后端
+│   └── factory.py      # 根据 DATABASE_URL 创建后端
 ├── auth.py             # 密码哈希 + 令牌
 ├── config.py           # 环境变量加载
 ├── parser.py           # 自然语言解析（fallback）
@@ -144,15 +147,52 @@ tests/
 ├── test_parser.py
 ├── test_config.py
 ├── test_context.py
-├── test_storage.py     # 44 个存储层测试
-└── test_insights.py    # 9 个行为学习测试
+├── test_storage.py           # 存储层核心测试
+├── test_storage_factory.py   # 后端路由测试
+├── test_postgresql_store.py  # PostgreSQL 集成测试（可选）
+└── test_insights.py          # 行为学习测试
 ```
+
+## 数据库配置
+
+默认使用 SQLite，数据保存在 `.momentum/tasks.db`。
+
+如果要部署给多人使用，建议切换到 PostgreSQL：
+
+```powershell
+# 1. 安装 PostgreSQL 依赖
+pip install -e ".[postgresql]"
+
+# 2. 通过环境变量指定数据库 URL
+$env:MOMENTUM_DATABASE_URL = "postgresql://user:password@localhost:5432/momentum_db"
+
+# 3. 启动服务
+momentum-agent serve
+```
+
+也支持通过命令行参数指定：
+
+```powershell
+momentum-agent serve --db "postgresql://user:password@localhost:5432/momentum_db"
+```
+
+支持的 URL 格式：
+- `sqlite:///absolute/path/to/db.db`
+- `sqlite:///:memory:`
+- `postgresql://user:pass@host/db`
+- `postgres://user:pass@host/db`
 
 ## 测试
 
 ```powershell
 pytest tests/ -v
-# 65 passed
+```
+
+PostgreSQL 集成测试默认跳过，设置环境变量后启用：
+
+```powershell
+$env:MOMENTUM_TEST_POSTGRES_URL = "postgresql://postgres:postgres@localhost:5432/momentum_test"
+pytest tests/test_postgresql_store.py -v
 ```
 
 ## License

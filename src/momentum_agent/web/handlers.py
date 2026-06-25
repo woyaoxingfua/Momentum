@@ -225,7 +225,7 @@ def handle_chat(handler: MomentumHandler, user_id: str) -> None:
     if not message:
         handler.send_json({"error": "消息不能为空。"}, HTTPStatus.BAD_REQUEST)
         return
-    response = asyncio.run(run_agent_message(handler.db_path, message, user_id=user_id))
+    response = asyncio.run(run_agent_message(handler.database_url, message, user_id=user_id))
     handler.send_json({"message": response})
 
 
@@ -249,7 +249,7 @@ def handle_chat_stream(handler: MomentumHandler, user_id: str) -> None:
 
     async def _stream():
         try:
-            async for event in run_agent_message_stream(handler.db_path, message, user_id=user_id):
+            async for event in run_agent_message_stream(handler.database_url, message, user_id=user_id):
                 # event 是 dict，直接序列化为 SSE
                 data = json.dumps(event, ensure_ascii=False)
                 handler.wfile.write(f"data: {data}\n\n".encode("utf-8"))

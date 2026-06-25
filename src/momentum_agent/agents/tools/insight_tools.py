@@ -19,7 +19,7 @@ def create_insight_tools(store: 'TaskStore', user_id: str):
     def get_behavioral_profile() -> str:
         """获取用户行为画像（完成率、预估准确率、高效时段、倦怠风险等）。"""
         from ...insights import InsightsEngine
-        engine = InsightsEngine(store.db_path)
+        engine = InsightsEngine(store)
         profile = engine.build_profile(user_id)
         return _to_json(profile.to_dict())
 
@@ -27,7 +27,7 @@ def create_insight_tools(store: 'TaskStore', user_id: str):
     def get_insights() -> str:
         """获取当前任务的行为洞察列表（风险、模式、建议、成就）。"""
         from ...insights import InsightsEngine
-        engine = InsightsEngine(store.db_path)
+        engine = InsightsEngine(store)
         tasks = store.list_tasks(status=None, user_id=user_id)
         insights = engine.generate_insights(tasks, user_id)
         return _to_json([
@@ -46,7 +46,7 @@ def create_insight_tools(store: 'TaskStore', user_id: str):
     def get_strategic_summary() -> str:
         """获取行为分析的战略摘要（一段话总结用户模式和建议）。"""
         from ...insights import InsightsEngine
-        engine = InsightsEngine(store.db_path)
+        engine = InsightsEngine(store)
         return engine.get_strategic_summary(user_id)
 
     @function_tool
@@ -56,7 +56,7 @@ def create_insight_tools(store: 'TaskStore', user_id: str):
         根据用户过去的完成记录，给出更准确的时间预估。
         """
         from ...insights import InsightsEngine
-        engine = InsightsEngine(store.db_path)
+        engine = InsightsEngine(store)
         profile = engine.build_profile(user_id)
 
         base_minutes = 30

@@ -11,7 +11,7 @@ from .logger import get_logger
 from .models import ParsedTaskOutput, PlanOutput, Priority, TaskStatus
 from .parser import ParsedTask, parse_task_text
 from .planner import create_task_plan
-from .storage import TaskStore
+from .storage import TaskStore, create_task_store
 
 log = get_logger("agent")
 
@@ -367,8 +367,9 @@ def _make_hooks():
 
 def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, user_id: str = DEFAULT_USER_ID):
     """Build the unified Momentum agent with handoffs to specialist sub-agents."""
+    store_key = str(getattr(store, "db_path", getattr(store, "dsn", str(store))))
     cache_key = (
-        str(store.db_path),
+        store_key,
         user_id,
         provider.model,
         provider.base_url or "",
@@ -701,11 +702,11 @@ async def _build_output_guardrail():
 
 
 async def run_agent_message(
-    db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
+    database_url: str, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
 ) -> str:
     """Run a message through the full agent system with conversation history."""
     log.info("agent_message user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
-    store = TaskStore(db_path)
+    store = create_task_store(database_url)
     user_config = store.get_all_memory(user_id=user_id)
     provider = load_provider_config(user_config)
 
@@ -771,7 +772,7 @@ async def run_agent_message(
 
 
 async def run_agent_message_stream(
-    db_path: Path, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
+    database_url: str, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
 ) -> AsyncIterator[dict]:
     """True streaming with Runner.run_streamed + fallback to Runner.run with hooks.
 
@@ -783,7 +784,7 @@ async def run_agent_message_stream(
     - {"type": "error", "message": "..."}
     """
     log.info("agent_stream user=%r msg=%r has_image=%s", user_id, message[:80], bool(image_base64))
-    store = TaskStore(db_path)
+    store = create_task_store(database_url)
     user_config = store.get_all_memory(user_id=user_id)
     provider = load_provider_config(user_config)
 

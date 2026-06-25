@@ -7,14 +7,17 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from .logger import get_logger
 from .models import Task, TaskStatus
+
+if TYPE_CHECKING:
+    from .storage import PostgreSQLTaskStore, SQLiteTaskStore
 
 log = get_logger("insights")
 
@@ -81,15 +84,39 @@ class Insight:
 
 
 class InsightsEngine:
-    """行为分析引擎 — 从 SQLite 的 task_events 和 tasks 表中提取洞察。"""
+    """行为分析引擎 — 从任务存储后端中提取洞察。"""
 
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
+    def __init__(self, store: "SQLiteTaskStore | PostgreSQLTaskStore") -> None:
+        self.store = store
+        # 延迟导入以避免循环依赖
+        from .storage import PostgreSQLTaskStore, SQLiteTaskStore
+        self._is_sqlite = isinstance(store, SQLiteTaskStore)
+        self._is_pg = isinstance(store, PostgreSQLTaskStore)
+        if not self._is_sqlite and not self._is_pg:
+            raise TypeError(f"Unsupported store type: {type(store)}")
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _connect(self) -> Any:
+        if self._is_sqlite:
+            import sqlite3
+            conn = sqlite3.connect(self.store.db_path)
+            conn.row_factory = sqlite3.Row
+            return conn
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        return psycopg2.connect(self.store.dsn, cursor_factory=RealDictCursor)
+
+    def _date_expr(self, col: str) -> str:
+        return f"DATE({col})" if self._is_sqlite else f"DATE({col}::timestamp)"
+
+    def _dow_expr(self, col: str) -> str:
+        return f"strftime('%w', {col})" if self._is_sqlite else f"EXTRACT(DOW FROM {col}::timestamp)::int"
+
+    def _now_minus_days(self, days: int) -> str:
+        return f"datetime('now', '-{days} days')" if self._is_sqlite else f"(NOW() - INTERVAL '{days} days')"
+
+    def _ph(self) -> str:
+        """返回当前数据库对应的参数占位符（SQLite 用 ?，PostgreSQL 用 %s）。"""
+        return "%s" if self._is_pg else "?"
 
     def build_profile(self, user_id: str = "default") -> BehavioralProfile:
         """构建用户行为画像。"""
@@ -97,11 +124,13 @@ class InsightsEngine:
         now = datetime.now(timezone.utc)
 
         with self._connect() as conn:
+            cur = conn.cursor()
             # ── 基础统计 ──────────────────────────────────────
-            rows = conn.execute(
-                "SELECT status, COUNT(*) as cnt FROM tasks WHERE user_id = ? GROUP BY status",
+            cur.execute(
+                f"SELECT status, COUNT(*) as cnt FROM tasks WHERE user_id = {self._ph()} GROUP BY status",
                 (user_id,),
-            ).fetchall()
+            )
+            rows = cur.fetchall()
             status_counts = {r["status"]: r["cnt"] for r in rows}
             profile.total_created = sum(status_counts.values())
             profile.total_completed = status_counts.get("done", 0)
@@ -111,17 +140,17 @@ class InsightsEngine:
                 profile.completion_rate = profile.total_completed / profile.total_created
 
             # ── 完成时间分析 ──────────────────────────────────
-            # 从 task_events 中找到 created → done 的时间差
-            completed_events = conn.execute(
-                """
+            cur.execute(
+                f"""
                 SELECT t.id, t.estimated_minutes, t.created_at, t.updated_at
                 FROM tasks t
-                WHERE t.user_id = ? AND t.status = 'done'
+                WHERE t.user_id = {self._ph()} AND t.status = 'done'
                 ORDER BY t.updated_at DESC
                 LIMIT 100
                 """,
                 (user_id,),
-            ).fetchall()
+            )
+            completed_events = cur.fetchall()
 
             if completed_events:
                 completion_times = []
@@ -173,7 +202,6 @@ class InsightsEngine:
                     if ev["estimated_minutes"]:
                         durations.append(ev["estimated_minutes"])
                 if durations:
-                    # 找最常见的时长区间
                     buckets = Counter()
                     for d in durations:
                         if d <= 15:
@@ -190,38 +218,39 @@ class InsightsEngine:
                     }[most_common]
 
             # ── 拖延类型分析 ──────────────────────────────────
-            # 找出被推迟或放弃次数最多的任务关键词
-            postponed_tasks = conn.execute(
-                """
+            cur.execute(
+                f"""
                 SELECT t.title, COUNT(*) as cnt
                 FROM task_events e
                 JOIN tasks t ON e.task_id = t.id
                 WHERE e.event_type = 'status_changed'
                   AND e.payload = 'dropped'
-                  AND t.user_id = ?
+                  AND t.user_id = {self._ph()}
                 GROUP BY t.title
                 ORDER BY cnt DESC
                 LIMIT 5
                 """,
                 (user_id,),
-            ).fetchall()
+            )
+            postponed_tasks = cur.fetchall()
             profile.procrastination_types = [r["title"] for r in postponed_tasks]
 
             # ── 每日产出模式 ──────────────────────────────────
-            daily_counts = conn.execute(
-                """
-                SELECT DATE(updated_at) as day, COUNT(*) as cnt
+            date_col = self._date_expr("updated_at")
+            cur.execute(
+                f"""
+                SELECT {date_col} as day, COUNT(*) as cnt
                 FROM tasks
-                WHERE user_id = ? AND status = 'done'
+                WHERE user_id = {self._ph()} AND status = 'done'
                 GROUP BY day
                 ORDER BY cnt DESC
                 LIMIT 7
                 """,
                 (user_id,),
-            ).fetchall()
+            )
+            daily_counts = cur.fetchall()
             if daily_counts:
                 profile.avg_tasks_per_day = sum(r["cnt"] for r in daily_counts) / len(daily_counts)
-                # 找出产出最高的星期几
                 day_names = []
                 for r in daily_counts:
                     try:
@@ -232,23 +261,25 @@ class InsightsEngine:
                 profile.productive_days = list(dict.fromkeys(day_names))[:3]
 
             # ── 过期趋势 ──────────────────────────────────────
-            overdue_week1 = conn.execute(
-                """
+            cur.execute(
+                f"""
                 SELECT COUNT(*) as cnt FROM tasks
-                WHERE user_id = ? AND status IN ('todo', 'doing')
-                  AND due_at < ? AND due_at > ?
+                WHERE user_id = {self._ph()} AND status IN ('todo', 'doing')
+                  AND due_at < {self._ph()} AND due_at > {self._ph()}
                 """,
                 (user_id, now.isoformat(), (now - timedelta(days=7)).isoformat()),
-            ).fetchone()["cnt"]
+            )
+            overdue_week1 = cur.fetchone()["cnt"]
 
-            overdue_week2 = conn.execute(
-                """
+            cur.execute(
+                f"""
                 SELECT COUNT(*) as cnt FROM tasks
-                WHERE user_id = ? AND status IN ('todo', 'doing')
-                  AND due_at < ? AND due_at > ?
+                WHERE user_id = {self._ph()} AND status IN ('todo', 'doing')
+                  AND due_at < {self._ph()} AND due_at > {self._ph()}
                 """,
                 (user_id, (now - timedelta(days=7)).isoformat(), (now - timedelta(days=14)).isoformat()),
-            ).fetchone()["cnt"]
+            )
+            overdue_week2 = cur.fetchone()["cnt"]
 
             if overdue_week1 > overdue_week2 * 1.5:
                 profile.overdue_trend = "increasing"
@@ -256,22 +287,23 @@ class InsightsEngine:
                 profile.overdue_trend = "decreasing"
 
             # ── 倦怠风险 ──────────────────────────────────────
-            # 最近 7 天完成数 vs 之前 7 天
-            recent_done = conn.execute(
-                """
+            cur.execute(
+                f"""
                 SELECT COUNT(*) as cnt FROM tasks
-                WHERE user_id = ? AND status = 'done' AND updated_at > ?
+                WHERE user_id = {self._ph()} AND status = 'done' AND updated_at > {self._ph()}
                 """,
                 (user_id, (now - timedelta(days=7)).isoformat()),
-            ).fetchone()["cnt"]
+            )
+            recent_done = cur.fetchone()["cnt"]
 
-            prev_done = conn.execute(
-                """
+            cur.execute(
+                f"""
                 SELECT COUNT(*) as cnt FROM tasks
-                WHERE user_id = ? AND status = 'done' AND updated_at > ? AND updated_at <= ?
+                WHERE user_id = {self._ph()} AND status = 'done' AND updated_at > {self._ph()} AND updated_at <= {self._ph()}
                 """,
                 (user_id, (now - timedelta(days=14)).isoformat(), (now - timedelta(days=7)).isoformat()),
-            ).fetchone()["cnt"]
+            )
+            prev_done = cur.fetchone()["cnt"]
 
             if prev_done > 0 and recent_done < prev_done * 0.3:
                 profile.burnout_risk = "high"
@@ -283,17 +315,20 @@ class InsightsEngine:
 
         return profile
 
-    def _calc_consistency(self, conn: sqlite3.Connection, user_id: str) -> float:
+    def _calc_consistency(self, conn: Any, user_id: str) -> float:
         """计算每日完成任务的一致性。"""
-        rows = conn.execute(
-            """
-            SELECT DATE(updated_at) as day, COUNT(*) as cnt
+        date_col = self._date_expr("updated_at")
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT {date_col} as day, COUNT(*) as cnt
             FROM tasks
-            WHERE user_id = ? AND status = 'done' AND updated_at > datetime('now', '-14 days')
+            WHERE user_id = {self._ph()} AND status = 'done' AND updated_at > {self._now_minus_days(14)}
             GROUP BY day
             """,
             (user_id,),
-        ).fetchall()
+        )
+        rows = cur.fetchall()
 
         if len(rows) < 3:
             return 0.0
@@ -440,44 +475,49 @@ class InsightsEngine:
 
     def get_weekly_pattern(self, user_id: str = "default") -> dict:
         """分析每周产出模式。"""
+        dow_col = self._dow_expr("updated_at")
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT strftime('%w', updated_at) as weekday, COUNT(*) as cnt
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+                SELECT {dow_col} as weekday, COUNT(*) as cnt
                 FROM tasks
-                WHERE user_id = ? AND status = 'done'
+                WHERE user_id = {self._ph()} AND status = 'done'
                 GROUP BY weekday
                 ORDER BY cnt DESC
                 """,
                 (user_id,),
-            ).fetchall()
+            )
+            rows = cur.fetchall()
 
         day_map = {"0": "周日", "1": "周一", "2": "周二", "3": "周三", "4": "周四", "5": "周五", "6": "周六"}
         pattern = {}
         for r in rows:
-            pattern[day_map.get(r["weekday"], r["weekday"])] = r["cnt"]
+            weekday = str(int(r["weekday"]))
+            pattern[day_map.get(weekday, weekday)] = r["cnt"]
         return pattern
 
     def get_task_type_analysis(self, user_id: str = "default") -> dict:
         """分析任务类型偏好（基于标签）。"""
         with self._connect() as conn:
-            # 完成的任务标签分布
-            done_tags = conn.execute(
-                """
+            cur = conn.cursor()
+            cur.execute(
+                f"""
                 SELECT tags FROM tasks
-                WHERE user_id = ? AND status = 'done' AND tags IS NOT NULL
+                WHERE user_id = {self._ph()} AND status = 'done' AND tags IS NOT NULL
                 """,
                 (user_id,),
-            ).fetchall()
+            )
+            done_tags = cur.fetchall()
 
-            # 放弃的任务标签分布
-            dropped_tags = conn.execute(
-                """
+            cur.execute(
+                f"""
                 SELECT tags FROM tasks
-                WHERE user_id = ? AND status = 'dropped' AND tags IS NOT NULL
+                WHERE user_id = {self._ph()} AND status = 'dropped' AND tags IS NOT NULL
                 """,
                 (user_id,),
-            ).fetchall()
+            )
+            dropped_tags = cur.fetchall()
 
         from collections import Counter
         done_counter = Counter()
@@ -504,16 +544,19 @@ class InsightsEngine:
 
     def get_consistency_score(self, user_id: str = "default") -> float:
         """计算一致性得分（0-1，基于每日完成任务的稳定性）。"""
+        date_col = self._date_expr("updated_at")
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT DATE(updated_at) as day, COUNT(*) as cnt
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+                SELECT {date_col} as day, COUNT(*) as cnt
                 FROM tasks
-                WHERE user_id = ? AND status = 'done' AND updated_at > datetime('now', '-14 days')
+                WHERE user_id = {self._ph()} AND status = 'done' AND updated_at > {self._now_minus_days(14)}
                 GROUP BY day
                 """,
                 (user_id,),
-            ).fetchall()
+            )
+            rows = cur.fetchall()
 
         if len(rows) < 3:
             return 0.0
@@ -525,9 +568,8 @@ class InsightsEngine:
 
         variance = sum((x - avg) ** 2 for x in counts) / len(counts)
         std_dev = variance ** 0.5
-        cv = std_dev / avg  # coefficient of variation
+        cv = std_dev / avg
 
-        # Lower CV = more consistent = higher score
         score = max(0.0, min(1.0, 1.0 - cv))
         return round(score, 2)
 

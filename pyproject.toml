@@ -15,6 +15,9 @@ dev = [
     "pytest>=8.0",
     "tzdata>=2024",
 ]
+postgresql = [
+    "psycopg2-binary>=2.9",
+]
 
 [project.scripts]
 momentum-agent = "momentum_agent.cli:main"

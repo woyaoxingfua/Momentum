@@ -16,7 +16,7 @@ def store(tmp_path):
 
 @pytest.fixture
 def engine(store):
-    return InsightsEngine(store.db_path)
+    return InsightsEngine(store)
 
 
 class TestBehavioralProfile:

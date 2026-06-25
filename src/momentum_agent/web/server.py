@@ -17,8 +17,7 @@ def _get_user_id(handler: MomentumHandler) -> str | None:
     token = handler.headers.get("Authorization", "").replace("Bearer ", "")
     if not token:
         return None
-    from ..storage import TaskStore
-    return TaskStore(handler.db_path).validate_session(token)
+    return handler.store.validate_session(token)
 
 
 def _require_auth(handler: MomentumHandler):
@@ -30,14 +29,14 @@ def _require_auth(handler: MomentumHandler):
 
 
 class MomentumHandler(BaseHTTPRequestHandler):
-    db_path: Path
+    database_url: str
     _last_status: int = 200
     protocol_version = "HTTP/1.1"  # SSE 流式输出需要 HTTP/1.1
 
     @property
     def store(self):
-        from ..storage import TaskStore
-        return TaskStore(self.db_path)
+        from ..storage import create_task_store
+        return create_task_store(self.database_url)
 
     def handle_one_request(self) -> None:
         try:
@@ -251,11 +250,11 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 log_api_request("PUT", parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
 
 
-def run_server(db_path: Path, *, host: str = "127.0.0.1", port: int = 8765) -> None:
+def run_server(database_url: str, *, host: str = "127.0.0.1", port: int = 8765) -> None:
     init_from_env()
-    from ..storage import TaskStore
-    TaskStore.ensure_schema(db_path)
-    handler = type("ConfiguredMomentumHandler", (MomentumHandler,), {"db_path": db_path})
+    from ..storage import create_task_store
+    create_task_store(database_url)
+    handler = type("ConfiguredMomentumHandler", (MomentumHandler,), {"database_url": database_url})
     server = ThreadingHTTPServer((host, port), handler)
     log.info("server listening at http://%s:%s", host, port)
     print(f"Momentum Task Agent running at http://{host}:{port}")
