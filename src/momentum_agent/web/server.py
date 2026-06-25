@@ -248,6 +248,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
 def run_server(db_path: Path, *, host: str = "127.0.0.1", port: int = 8765) -> None:
     init_from_env()
+    from ..storage import TaskStore
+    TaskStore.ensure_schema(db_path)
     handler = type("ConfiguredMomentumHandler", (MomentumHandler,), {"db_path": db_path})
     server = ThreadingHTTPServer((host, port), handler)
     log.info("server listening at http://%s:%s", host, port)

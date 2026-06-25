@@ -3,6 +3,7 @@ import { requestJson, escapeHtml, formatDue, priorityText, recurrenceText, toDat
 const els = {};
 let currentStatus = "todo";
 let appEls = null;
+let currentTasks = [];
 
 export function initTasks(elements, dialogElements, appElements) {
   Object.assign(els, elements, dialogElements);
@@ -20,6 +21,7 @@ export function getTaskStatusFilter() {
 const STATUS_LABELS = { todo: "待办", doing: "进行中", done: "已完成", dropped: "已放弃" };
 
 export function renderTasks(tasks, isSearchResult = false) {
+  currentTasks = tasks || [];
   if (isSearchResult) {
     els.taskCount.textContent = `${tasks.length} 个搜索结果`;
   } else {
@@ -191,8 +193,11 @@ export async function saveSubtask(event) {
 }
 
 async function openEditDialog(taskId) {
-  const payload = await requestJson(`/api/tasks?status=${currentStatus}`);
-  const task = payload.tasks.find((t) => t.id === Number(taskId));
+  let task = currentTasks.find((t) => t.id === Number(taskId));
+  if (!task) {
+    const payload = await requestJson(`/api/tasks?status=${currentStatus}`);
+    task = payload.tasks.find((t) => t.id === Number(taskId));
+  }
   if (!task) return;
 
   els.editTaskId.value = task.id;
