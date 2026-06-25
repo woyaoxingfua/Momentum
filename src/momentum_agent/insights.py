@@ -17,7 +17,7 @@ from .logger import get_logger
 from .models import Task, TaskStatus
 
 if TYPE_CHECKING:
-    from .storage import PostgreSQLTaskStore, SQLiteTaskStore
+    from .storage import MySQLTaskStore, SQLiteTaskStore
 
 log = get_logger("insights")
 
@@ -86,13 +86,13 @@ class Insight:
 class InsightsEngine:
     """行为分析引擎 — 从任务存储后端中提取洞察。"""
 
-    def __init__(self, store: "SQLiteTaskStore | PostgreSQLTaskStore") -> None:
+    def __init__(self, store: "SQLiteTaskStore | MySQLTaskStore") -> None:
         self.store = store
         # 延迟导入以避免循环依赖
-        from .storage import PostgreSQLTaskStore, SQLiteTaskStore
+        from .storage import MySQLTaskStore, SQLiteTaskStore
         self._is_sqlite = isinstance(store, SQLiteTaskStore)
-        self._is_pg = isinstance(store, PostgreSQLTaskStore)
-        if not self._is_sqlite and not self._is_pg:
+        self._is_mysql = isinstance(store, MySQLTaskStore)
+        if not self._is_sqlite and not self._is_mysql:
             raise TypeError(f"Unsupported store type: {type(store)}")
 
     def _connect(self) -> Any:
@@ -101,22 +101,31 @@ class InsightsEngine:
             conn = sqlite3.connect(self.store.db_path)
             conn.row_factory = sqlite3.Row
             return conn
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
-        return psycopg2.connect(self.store.dsn, cursor_factory=RealDictCursor)
+        import pymysql
+        return pymysql.connect(
+            host=self.store.host,
+            port=self.store.port,
+            user=self.store.user,
+            password=self.store.password,
+            database=self.store.database,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
 
     def _date_expr(self, col: str) -> str:
-        return f"DATE({col})" if self._is_sqlite else f"DATE({col}::timestamp)"
+        return f"DATE({col})" if self._is_sqlite else f"DATE({col})"
 
     def _dow_expr(self, col: str) -> str:
-        return f"strftime('%w', {col})" if self._is_sqlite else f"EXTRACT(DOW FROM {col}::timestamp)::int"
+        # SQLite strftime('%w'): 0=周日...6=周六
+        # MySQL DAYOFWEEK: 1=周日...7=周六，所以减 1 对齐
+        return f"strftime('%w', {col})" if self._is_sqlite else f"DAYOFWEEK({col}) - 1"
 
     def _now_minus_days(self, days: int) -> str:
-        return f"datetime('now', '-{days} days')" if self._is_sqlite else f"(NOW() - INTERVAL '{days} days')"
+        return f"datetime('now', '-{days} days')" if self._is_sqlite else f"DATE_SUB(NOW(), INTERVAL {days} DAY)"
 
     def _ph(self) -> str:
-        """返回当前数据库对应的参数占位符（SQLite 用 ?，PostgreSQL 用 %s）。"""
-        return "%s" if self._is_pg else "?"
+        """返回当前数据库对应的参数占位符（SQLite 用 ?，MySQL 用 %s）。"""
+        return "%s" if self._is_mysql else "?"
 
     def build_profile(self, user_id: str = "default") -> BehavioralProfile:
         """构建用户行为画像。"""

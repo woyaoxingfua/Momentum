@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from momentum_agent.storage import PostgreSQLTaskStore, SQLiteTaskStore, create_task_store
+from momentum_agent.storage import MySQLTaskStore, SQLiteTaskStore, create_task_store
 
 
 def test_factory_defaults_to_sqlite(tmp_path):
@@ -18,22 +18,16 @@ def test_factory_sqlite_url():
     assert isinstance(store, SQLiteTaskStore)
 
 
-def test_factory_postgres_url(monkeypatch):
-    monkeypatch.setattr(PostgreSQLTaskStore, "_init_schema", lambda self: None)
-    store = create_task_store("postgresql://user:pass@localhost/db")
-    assert isinstance(store, PostgreSQLTaskStore)
-    assert store.dsn == "postgresql://user:pass@localhost/db"
-
-
-def test_factory_postgres_url_alternative_scheme(monkeypatch):
-    monkeypatch.setattr(PostgreSQLTaskStore, "_init_schema", lambda self: None)
-    store = create_task_store("postgres://user:pass@localhost/db")
-    assert isinstance(store, PostgreSQLTaskStore)
+def test_factory_mysql_url(monkeypatch):
+    monkeypatch.setattr(MySQLTaskStore, "_init_schema", lambda self: None)
+    store = create_task_store("mysql://root:0000@localhost:3306/momentum_db")
+    assert isinstance(store, MySQLTaskStore)
+    assert store.dsn == "mysql://root:0000@localhost:3306/momentum_db"
 
 
 def test_factory_rejects_unsupported_url():
     with pytest.raises(ValueError, match="不支持的数据库 URL"):
-        create_task_store("mysql://user:pass@localhost/db")
+        create_task_store("postgresql://user:pass@localhost/db")
 
 
 def test_factory_uses_environment_variable(tmp_path, monkeypatch):
@@ -44,8 +38,8 @@ def test_factory_uses_environment_variable(tmp_path, monkeypatch):
     assert str(store.db_path) == db_path
 
 
-def test_factory_environment_variable_postgres(monkeypatch):
-    monkeypatch.setenv("MOMENTUM_DATABASE_URL", "postgresql://user:pass@localhost/db")
-    monkeypatch.setattr(PostgreSQLTaskStore, "_init_schema", lambda self: None)
+def test_factory_environment_variable_mysql(monkeypatch):
+    monkeypatch.setenv("MOMENTUM_DATABASE_URL", "mysql://root:0000@localhost:3306/momentum_db")
+    monkeypatch.setattr(MySQLTaskStore, "_init_schema", lambda self: None)
     store = create_task_store()
-    assert isinstance(store, PostgreSQLTaskStore)
+    assert isinstance(store, MySQLTaskStore)

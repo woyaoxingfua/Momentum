@@ -4,18 +4,17 @@ from __future__ import annotations
 import os
 from urllib.parse import urlparse
 
-from .postgresql import PostgreSQLTaskStore
+from .mysql import MySQLTaskStore
 from .sqlite import SQLiteTaskStore
 
 
-def create_task_store(database_url: str | None = None) -> SQLiteTaskStore | PostgreSQLTaskStore:
+def create_task_store(database_url: str | None = None) -> SQLiteTaskStore | MySQLTaskStore:
     """根据数据库 URL 创建存储后端。
 
     支持的 URL 格式：
       - sqlite:///absolute/path/to/db.db
       - sqlite:///:memory:
-      - postgresql://user:pass@host/db
-      - postgres://user:pass@host/db
+      - mysql://user:password@host:port/db
 
     未提供 URL 时默认使用环境变量 MOMENTUM_DATABASE_URL，
     否则回退到项目目录下的 .momentum/tasks.db。
@@ -40,7 +39,7 @@ def create_task_store(database_url: str | None = None) -> SQLiteTaskStore | Post
             db_path = database_url
         return SQLiteTaskStore(db_path)
 
-    if scheme in ("postgres", "postgresql"):
-        return PostgreSQLTaskStore(database_url)
+    if scheme == "mysql":
+        return MySQLTaskStore(database_url)
 
     raise ValueError(f"不支持的数据库 URL: {database_url}")

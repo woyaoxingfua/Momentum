@@ -1,9 +1,10 @@
-"""PostgreSQL 存储后端 — 支持多用户部署。"""
+"""MySQL 存储后端 — 支持多用户部署。"""
 from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Generator
+from urllib.parse import urlparse
 
 from ..logger import get_logger, log_db_query, log_security_event
 from ..models import Priority, Task, TaskStatus, TaskRelation, TaskRelationType
@@ -20,106 +21,125 @@ from .sqlite import (
     _serialize_tags,
 )
 
-log = get_logger("storage.pg")
+log = get_logger("storage.mysql")
 
-__all__ = ["PostgreSQLTaskStore"]
+__all__ = ["MySQLTaskStore"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
+    id VARCHAR(64) PRIMARY KEY,
     display_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(128) PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS tasks (
-    id SERIAL PRIMARY KEY,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     title TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'todo',
-    priority TEXT NOT NULL DEFAULT 'medium',
+    status VARCHAR(16) NOT NULL DEFAULT 'todo',
+    priority VARCHAR(16) NOT NULL DEFAULT 'medium',
     due_at TEXT,
-    estimated_minutes INTEGER,
+    estimated_minutes INT,
     notes TEXT,
-    parent_task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+    parent_task_id INT REFERENCES tasks(id) ON DELETE CASCADE,
     recurrence TEXT,
-    user_id TEXT NOT NULL DEFAULT 'default' REFERENCES users(id) ON DELETE CASCADE,
+    user_id VARCHAR(64) NOT NULL DEFAULT 'default' REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    tags TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
-CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON tasks(user_id, due_at);
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
+    tags TEXT,
+    INDEX idx_tasks_user_status (user_id, status),
+    INDEX idx_tasks_user_due (user_id, due_at),
+    INDEX idx_tasks_parent (parent_task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS task_relations (
-    id SERIAL PRIMARY KEY,
-    source_task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    target_task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    relation_type TEXT NOT NULL,
-    user_id TEXT NOT NULL DEFAULT 'default' REFERENCES users(id) ON DELETE CASCADE,
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    source_task_id INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    target_task_id INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    relation_type VARCHAR(16) NOT NULL,
+    user_id VARCHAR(64) NOT NULL DEFAULT 'default' REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
-    UNIQUE(source_task_id, target_task_id, relation_type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_relations_user ON task_relations(user_id);
+    UNIQUE KEY uk_relation (source_task_id, target_task_id, relation_type),
+    INDEX idx_relations_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS user_memory (
-    user_id TEXT NOT NULL DEFAULT 'local',
-    key TEXT NOT NULL,
+    user_id VARCHAR(64) NOT NULL DEFAULT 'local',
+    key VARCHAR(128) NOT NULL,
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, key)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS task_events (
-    id SERIAL PRIMARY KEY,
-    task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
-    event_type TEXT NOT NULL,
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id INT REFERENCES tasks(id) ON DELETE CASCADE,
+    event_type VARCHAR(32) NOT NULL,
     payload TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id);
+    created_at TEXT NOT NULL,
+    INDEX idx_events_task (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
 
-class PostgreSQLTaskStore:
-    """基于 PostgreSQL 的任务存储后端，适合多用户部署。"""
+def _parse_mysql_url(url: str) -> dict[str, Any]:
+    """把 mysql:// URL 解析成 pymysql.connect 参数。"""
+    parsed = urlparse(url)
+    return {
+        "host": parsed.hostname or "localhost",
+        "port": parsed.port or 3306,
+        "user": parsed.username or "root",
+        "password": parsed.password or "",
+        "database": parsed.path.lstrip("/") or None,
+        "charset": "utf8mb4",
+        "cursorclass": "pymysql.cursors.DictCursor",
+        "autocommit": False,
+    }
+
+
+class MySQLTaskStore:
+    """基于 MySQL 的任务存储后端，适合多用户部署。"""
 
     # 已初始化 schema 的 DSN 缓存，避免每次实例化都执行 migration
     _schema_initialized: set[str] = set()
 
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
+        self._connect_kwargs = _parse_mysql_url(dsn)
+        self.host = self._connect_kwargs["host"]
+        self.port = self._connect_kwargs["port"]
+        self.user = self._connect_kwargs["user"]
+        self.password = self._connect_kwargs["password"]
+        self.database = self._connect_kwargs["database"]
         self._init_schema()
-        log.info("pg store opened: %s", self.dsn)
+        log.info("mysql store opened: %s@%s/%s", self.user, self.host, self.database)
 
     def _init_schema(self) -> None:
         key = self.dsn
-        if key in PostgreSQLTaskStore._schema_initialized:
-            log.debug("pg schema already initialized for %s", self.dsn)
+        if key in MySQLTaskStore._schema_initialized:
+            log.debug("mysql schema already initialized for %s", self.dsn)
             return
-        log.debug("initializing pg schema")
+        log.debug("initializing mysql schema")
         with self._connect() as conn:
             self._migrate(conn)
             self._ensure_default_user(conn)
-        PostgreSQLTaskStore._schema_initialized.add(key)
+        MySQLTaskStore._schema_initialized.add(key)
 
     @contextmanager
     def _connect(self) -> Generator[Any, None, None]:
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
+        import pymysql
 
-        conn = psycopg2.connect(self.dsn)
-        conn.autocommit = False
+        connect_kwargs = dict(self._connect_kwargs)
+        cursorclass_name = connect_kwargs.pop("cursorclass")
+        connect_kwargs["cursorclass"] = _import_cursor_class(cursorclass_name)
+        conn = pymysql.connect(**connect_kwargs)
         try:
             yield conn
             conn.commit()
@@ -131,9 +151,7 @@ class PostgreSQLTaskStore:
             conn.close()
 
     def _cursor(self, conn: Any) -> Any:
-        from psycopg2.extras import RealDictCursor
-
-        return conn.cursor(cursor_factory=RealDictCursor)
+        return conn.cursor()
 
     def _execute(self, conn: Any, sql: str, params: tuple | list | None = None) -> Any:
         log_db_query(sql)
@@ -157,15 +175,15 @@ class PostgreSQLTaskStore:
     def _migrate(self, conn: Any) -> None:
         from ..auth import hash_password
 
-        # 初始化表结构
         cur = self._cursor(conn)
-        cur.execute(SCHEMA)
+        for stmt in _split_schema(SCHEMA):
+            cur.execute(stmt)
 
         # 迁移 users 表：添加 password_hash 列（兼容旧数据库）
         cur.execute(
             """
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'users' AND column_name = 'password_hash'
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'users' AND COLUMN_NAME = 'password_hash'
             """
         )
         if not cur.fetchone():
@@ -180,17 +198,17 @@ class PostgreSQLTaskStore:
         # 迁移 tasks 表：添加各列
         cur.execute(
             """
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'tasks' AND column_name IN ('recurrence', 'user_id', 'tags')
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'tasks' AND COLUMN_NAME IN ('recurrence', 'user_id', 'tags')
             """
         )
-        existing_cols = {row["column_name"] for row in cur.fetchall()}
+        existing_cols = {row["COLUMN_NAME"] for row in cur.fetchall()}
         if "recurrence" not in existing_cols:
             log.info("migration: adding recurrence column")
             cur.execute("ALTER TABLE tasks ADD COLUMN recurrence TEXT")
         if "user_id" not in existing_cols:
             log.info("migration: adding user_id column")
-            cur.execute("ALTER TABLE tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
+            cur.execute("ALTER TABLE tasks ADD COLUMN user_id VARCHAR(64) NOT NULL DEFAULT 'default'")
         if "tags" not in existing_cols:
             log.info("migration: adding tags column")
             cur.execute("ALTER TABLE tasks ADD COLUMN tags TEXT")
@@ -198,8 +216,8 @@ class PostgreSQLTaskStore:
         # 迁移 sessions 表：添加过期时间列
         cur.execute(
             """
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'sessions' AND column_name = 'expires_at'
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'sessions' AND COLUMN_NAME = 'expires_at'
             """
         )
         if not cur.fetchone():
@@ -244,10 +262,10 @@ class PostgreSQLTaskStore:
                 """
                 INSERT INTO sessions (token, user_id, created_at, expires_at)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (token) DO UPDATE SET
-                    user_id = EXCLUDED.user_id,
-                    created_at = EXCLUDED.created_at,
-                    expires_at = EXCLUDED.expires_at
+                ON DUPLICATE KEY UPDATE
+                    user_id = VALUES(user_id),
+                    created_at = VALUES(created_at),
+                    expires_at = VALUES(expires_at)
                 """,
                 (token, user_id, encode_dt(now), encode_dt(now + SESSION_LIFETIME)),
             )
@@ -314,7 +332,7 @@ class PostgreSQLTaskStore:
         log.info("create_task title=%r user=%r priority=%s", title.strip(), user_id, priority.value)
         tags_str = _serialize_tags(tags)
         with self._connect() as conn:
-            cur = self._execute(
+            self._execute(
                 conn,
                 """
                 INSERT INTO tasks (
@@ -322,7 +340,6 @@ class PostgreSQLTaskStore:
                     parent_task_id, recurrence, user_id, created_at, updated_at, tags
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
                 """,
                 (
                     title.strip(),
@@ -339,7 +356,7 @@ class PostgreSQLTaskStore:
                     tags_str,
                 ),
             )
-            task_id = int(cur.fetchone()["id"])
+            task_id = int(conn.insert_id())
             self._execute(
                 conn,
                 "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (%s, %s, %s, %s)",
@@ -681,23 +698,22 @@ class PostgreSQLTaskStore:
                  source_task_id, target_task_id, relation_type.value, user_id)
         try:
             with self._connect() as conn:
-                cur = self._execute(
+                self._execute(
                     conn,
                     """
                     INSERT INTO task_relations
                     (source_task_id, target_task_id, relation_type, user_id, created_at)
                     VALUES (%s, %s, %s, %s, %s)
-                    RETURNING id
                     """,
                     (source_task_id, target_task_id, relation_type.value, user_id, encode_dt(now)),
                 )
-                relation_id = int(cur.fetchone()["id"])
+                relation_id = int(conn.insert_id())
                 cur = self._execute(conn, "SELECT * FROM task_relations WHERE id = %s", (relation_id,))
                 row = cur.fetchone()
             return row_to_task_relation(row)
         except Exception as exc:
-            # psycopg2 唯一约束冲突
-            if "unique" in str(exc).lower() or "23505" in str(exc):
+            import pymysql
+            if isinstance(exc, pymysql.err.IntegrityError) and exc.args[0] == 1062:
                 log.warning("task relation already exists")
                 return None
             raise
@@ -960,9 +976,9 @@ class PostgreSQLTaskStore:
                 """
                 INSERT INTO user_memory (user_id, key, value, updated_at)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (user_id, key) DO UPDATE SET
-                    value = EXCLUDED.value,
-                    updated_at = EXCLUDED.updated_at
+                ON DUPLICATE KEY UPDATE
+                    value = VALUES(value),
+                    updated_at = VALUES(updated_at)
                 """,
                 (user_id, key, value, encode_dt(now)),
             )
@@ -999,7 +1015,7 @@ class PostgreSQLTaskStore:
                 conn,
                 """
                 SELECT * FROM tasks WHERE user_id = %s
-                AND (title ILIKE %s OR notes ILIKE %s OR tags ILIKE %s)
+                AND (title LIKE %s OR notes LIKE %s OR tags LIKE %s)
                 ORDER BY due_at IS NULL, due_at, id
                 """,
                 (user_id, like, like, like),
@@ -1118,3 +1134,22 @@ class PostgreSQLTaskStore:
             if hours_since < config["interval_hours"]:
                 return False
         return True
+
+
+def _import_cursor_class(name: str) -> Any:
+    """延迟导入 pymysql DictCursor，避免顶层导入失败。"""
+    import importlib
+
+    module_name, class_name = name.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    return getattr(module, class_name)
+
+
+def _split_schema(schema: str) -> list[str]:
+    """按分号拆分 MySQL schema 语句（不破坏存储过程等）。"""
+    stmts = []
+    for stmt in schema.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            stmts.append(stmt)
+    return stmts

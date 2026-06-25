@@ -102,7 +102,7 @@ momentum-agent serve --port 8765
 | 层 | 选型 |
 |---|---|
 | AI SDK | OpenAI Agents SDK |
-| 数据库 | SQLite（默认）/ PostgreSQL（可选，适合多用户部署） |
+| 数据库 | SQLite（默认）/ MySQL（可选，适合多用户部署） |
 | Web 服务 | Python stdlib `http.server` |
 | 前端 | 原生 JS，零构建步骤 |
 | 认证 | PBKDF2-SHA256 + Session Token |
@@ -116,7 +116,7 @@ src/momentum_agent/
 ├── agent_app.py        # Agent 核心逻辑
 ├── storage/            # 可插拔存储层
 │   ├── sqlite.py       # SQLite 后端
-│   ├── postgresql.py   # PostgreSQL 后端
+│   ├── mysql.py        # MySQL 后端
 │   └── factory.py      # 根据 DATABASE_URL 创建后端
 ├── auth.py             # 密码哈希 + 令牌
 ├── config.py           # 环境变量加载
@@ -149,7 +149,7 @@ tests/
 ├── test_context.py
 ├── test_storage.py           # 存储层核心测试
 ├── test_storage_factory.py   # 后端路由测试
-├── test_postgresql_store.py  # PostgreSQL 集成测试（可选）
+├── test_mysql_store.py       # MySQL 集成测试（可选）
 └── test_insights.py          # 行为学习测试
 ```
 
@@ -157,14 +157,14 @@ tests/
 
 默认使用 SQLite，数据保存在 `.momentum/tasks.db`。
 
-如果要部署给多人使用，建议切换到 PostgreSQL：
+如果要部署给多人使用，建议切换到 MySQL：
 
 ```powershell
-# 1. 安装 PostgreSQL 依赖
-pip install -e ".[postgresql]"
+# 1. 安装 MySQL 依赖
+pip install -e ".[mysql]"
 
 # 2. 通过环境变量指定数据库 URL
-$env:MOMENTUM_DATABASE_URL = "postgresql://user:password@localhost:5432/momentum_db"
+$env:MOMENTUM_DATABASE_URL = "mysql://root:0000@localhost:3306/momentum_db"
 
 # 3. 启动服务
 momentum-agent serve
@@ -173,14 +173,13 @@ momentum-agent serve
 也支持通过命令行参数指定：
 
 ```powershell
-momentum-agent serve --db "postgresql://user:password@localhost:5432/momentum_db"
+momentum-agent serve --db "mysql://root:0000@localhost:3306/momentum_db"
 ```
 
 支持的 URL 格式：
 - `sqlite:///absolute/path/to/db.db`
 - `sqlite:///:memory:`
-- `postgresql://user:pass@host/db`
-- `postgres://user:pass@host/db`
+- `mysql://user:password@host:port/db`
 
 ## 测试
 
@@ -188,11 +187,11 @@ momentum-agent serve --db "postgresql://user:password@localhost:5432/momentum_db
 pytest tests/ -v
 ```
 
-PostgreSQL 集成测试默认跳过，设置环境变量后启用：
+MySQL 集成测试默认跳过，设置环境变量后启用：
 
 ```powershell
-$env:MOMENTUM_TEST_POSTGRES_URL = "postgresql://postgres:postgres@localhost:5432/momentum_test"
-pytest tests/test_postgresql_store.py -v
+$env:MOMENTUM_TEST_MYSQL_URL = "mysql://root:0000@localhost:3306/momentum_test"
+pytest tests/test_mysql_store.py -v
 ```
 
 ## License

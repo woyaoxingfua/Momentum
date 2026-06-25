@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .factory import create_task_store
-from .postgresql import PostgreSQLTaskStore
+from .mysql import MySQLTaskStore
 from .sqlite import (
     DEFAULT_USER,
     SESSION_LIFETIME,
@@ -20,7 +20,7 @@ TaskStore = SQLiteTaskStore
 __all__ = [
     "TaskStore",
     "SQLiteTaskStore",
-    "PostgreSQLTaskStore",
+    "MySQLTaskStore",
     "create_task_store",
     "DEFAULT_USER",
     "SESSION_LIFETIME",
