@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from http import HTTPStatus
 from importlib.resources import files
 from typing import TYPE_CHECKING
@@ -10,6 +11,10 @@ from urllib.parse import parse_qs
 
 if TYPE_CHECKING:
     from .server import MomentumHandler
+
+_login_attempts: dict[str, tuple[int, float]] = {}
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 300
 
 
 # ── 静态文件 ──────────────────────────────────────────────────────
@@ -149,8 +154,11 @@ def handle_register(handler: MomentumHandler) -> None:
     if not user_id or not password:
         handler.send_json({"error": "用户名和密码不能为空"}, HTTPStatus.BAD_REQUEST)
         return
-    if len(password) < 4:
-        handler.send_json({"error": "密码至少 4 位"}, HTTPStatus.BAD_REQUEST)
+    if len(user_id) < 2 or len(user_id) > 64:
+        handler.send_json({"error": "用户名长度需在 2-64 位之间"}, HTTPStatus.BAD_REQUEST)
+        return
+    if len(password) < 8:
+        handler.send_json({"error": "密码至少 8 位"}, HTTPStatus.BAD_REQUEST)
         return
     try:
         handler.store.register_user(user_id, display_name or user_id, hash_password(password))
@@ -160,6 +168,17 @@ def handle_register(handler: MomentumHandler) -> None:
 
 
 def handle_login(handler: MomentumHandler) -> None:
+    client_ip = handler.client_address[0] if handler.client_address else "unknown"
+    now = time.time()
+    attempts, lockout_until = _login_attempts.get(client_ip, (0, 0.0))
+    if now < lockout_until:
+        remaining = int(lockout_until - now)
+        handler.send_json(
+            {"error": f"登录失败次数过多，请 {remaining} 秒后再试"},
+            HTTPStatus.TOO_MANY_REQUESTS,
+        )
+        return
+
     payload = handler.read_json()
     user_id = str(payload.get("user_id", "")).strip()
     password = str(payload.get("password", "")).strip()
@@ -168,8 +187,14 @@ def handle_login(handler: MomentumHandler) -> None:
         return
     token = handler.store.login_user(user_id, password)
     if not token:
+        new_attempts = attempts + 1
+        if new_attempts >= MAX_LOGIN_ATTEMPTS:
+            _login_attempts[client_ip] = (new_attempts, now + LOGIN_LOCKOUT_SECONDS)
+        else:
+            _login_attempts[client_ip] = (new_attempts, 0.0)
         handler.send_json({"error": "用户名或密码错误"}, HTTPStatus.UNAUTHORIZED)
         return
+    _login_attempts.pop(client_ip, None)
     handler.send_json({"token": token, "user_id": user_id})
 
 
@@ -187,8 +212,8 @@ def handle_change_password(handler: MomentumHandler, user_id: str) -> None:
     if not old_pw or not new_pw:
         handler.send_json({"error": "请提供旧密码和新密码"}, HTTPStatus.BAD_REQUEST)
         return
-    if len(new_pw) < 4:
-        handler.send_json({"error": "新密码至少 4 位"}, HTTPStatus.BAD_REQUEST)
+    if len(new_pw) < 8:
+        handler.send_json({"error": "新密码至少 8 位"}, HTTPStatus.BAD_REQUEST)
         return
     ok = handler.store.change_password(user_id, old_pw, new_pw)
     if not ok:

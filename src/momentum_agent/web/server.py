@@ -28,6 +28,8 @@ def _require_auth(handler: MomentumHandler):
     return user_id
 
 
+MAX_REQUEST_BODY = 2 * 1024 * 1024  # 2MB
+
 class MomentumHandler(BaseHTTPRequestHandler):
     database_url: str
     _last_status: int = 200
@@ -61,6 +63,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length == 0:
             return {}
+        if length > MAX_REQUEST_BODY:
+            self.send_json(
+                {"error": f"请求体过大，最大 {MAX_REQUEST_BODY // 1024 // 1024}MB"},
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            )
+            return {}
         raw = self.rfile.read(length).decode("utf-8")
         try:
             value = json.loads(raw)
@@ -84,12 +92,18 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
     def _send_static_or_none(self, path: str) -> bool:
         from . import handlers
+        import os
         if path in self.STATIC_MAP:
             name, ct = self.STATIC_MAP[path]
             handlers.send_static(self, name, ct)
             return True
         if path.startswith("/js/"):
-            handlers.send_static(self, f"js/{path.split('/')[-1]}", "text/javascript; charset=utf-8")
+            filename = os.path.basename(path)
+            if not filename or ".." in filename or filename.startswith("."):
+                return False
+            if not filename.endswith(".js"):
+                return False
+            handlers.send_static(self, f"js/{filename}", "text/javascript; charset=utf-8")
             return True
         return False
 
