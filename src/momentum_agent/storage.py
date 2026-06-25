@@ -101,12 +101,12 @@ class TaskStore:
         conn.row_factory = sqlite3.Row
         try:
             yield conn
+            conn.commit()
         except sqlite3.Error as e:
             log.error("database error: %s", e)
             conn.rollback()
             raise
         finally:
-            conn.commit()
             conn.close()
 
     def _ensure_default_user(self, conn: sqlite3.Connection) -> None:

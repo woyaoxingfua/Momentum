@@ -22,6 +22,9 @@ log = get_logger("agent")
 _conversation_history: dict[str, list] = {}
 MAX_HISTORY_ITEMS = 40  # 保留最近 40 条消息（约 20 轮对话）
 
+# Agent 实例缓存 — 避免每次请求都重建长 system prompt 和工具定义
+_agent_cache: dict[tuple, object] = {}
+
 
 def _get_history(user_id: str) -> list:
     """获取用户的对话历史"""
@@ -364,6 +367,21 @@ def _make_hooks():
 
 def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, user_id: str = DEFAULT_USER_ID):
     """Build the unified Momentum agent with handoffs to specialist sub-agents."""
+    cache_key = (
+        str(store.db_path),
+        user_id,
+        provider.model,
+        provider.base_url or "",
+        provider.api_key or "",
+        provider.thinking or "",
+        provider.reasoning_effort or "",
+        provider.disable_tracing,
+    )
+    cached = _agent_cache.get(cache_key)
+    if cached is not None:
+        log.debug("reusing cached agent for user=%r model=%r", user_id, provider.model)
+        return cached
+
     from agents import Agent, OpenAIChatCompletionsModel, function_tool
     from .agents import (
         create_task_tools, create_subtask_tools, create_relation_tools,
@@ -507,7 +525,7 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
 
     core_tools += [get_all_tags, get_tasks_by_tag, add_tags_to_task, save_note, get_my_notes, get_user_context, get_daily_review]
 
-    return Agent(
+    agent = Agent(
         name="Momentum",
         instructions=f"""你是 **Momentum**，不是聊天机器人，是一个有自主判断力的任务伙伴。
 
@@ -586,6 +604,9 @@ def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, u
         tools=core_tools,
         handoffs=[insight_agent, weather_agent],
     )
+    _agent_cache[cache_key] = agent
+    log.info("built and cached agent for user=%r model=%r", user_id, provider.model)
+    return agent
 
 
 async def _build_input_guardrail():

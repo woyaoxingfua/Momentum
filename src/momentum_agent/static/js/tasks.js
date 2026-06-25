@@ -53,7 +53,7 @@ function renderTaskCard(task, index) {
     : "";
 
   const dueText = formatDue(task.due_at);
-  const dueClass = dueText.includes("逾期") ? "badge overdue" : dueText.includes("今天") ? "badge overdue" : "badge low";
+  const dueClass = dueText.includes("逾期") ? "badge overdue" : dueText.includes("今天") ? "badge status-doing" : "badge low";
 
   const estimateText = task.estimated_minutes ? `${task.estimated_minutes}m` : "";
 
