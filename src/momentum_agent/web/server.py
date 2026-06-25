@@ -34,6 +34,11 @@ class MomentumHandler(BaseHTTPRequestHandler):
     _last_status: int = 200
     protocol_version = "HTTP/1.1"  # SSE 流式输出需要 HTTP/1.1
 
+    @property
+    def store(self):
+        from ..storage import TaskStore
+        return TaskStore(self.db_path)
+
     def handle_one_request(self) -> None:
         try:
             super().handle_one_request()
@@ -89,8 +94,64 @@ class MomentumHandler(BaseHTTPRequestHandler):
             return True
         return False
 
-    def do_GET(self) -> None:
-        from . import handlers
+    # 类级别路由表，避免每次请求都重建字典
+    from . import handlers as _handlers
+
+    GET_EXACT_ROUTES = {
+        "/api/tags": _handlers.handle_get_all_tags,
+        "/api/heartbeat/config": _handlers.handle_get_heartbeat_config,
+        "/api/heartbeat/suggestion": _handlers.handle_get_heartbeat_suggestion,
+        "/api/user/location": _handlers.handle_get_user_location,
+        "/api/export": _handlers.handle_export,
+        "/api/advice": _handlers.handle_advice,
+        "/api/review": _handlers.handle_review,
+        "/api/provider": _handlers.handle_provider,
+        "/api/config": _handlers.handle_get_config,
+    }
+
+    GET_PREFIX_ROUTES = {
+        "/subtasks": _handlers.handle_get_subtasks,
+        "/with-subtasks": _handlers.handle_get_task_with_subtasks,
+        "/dependencies": _handlers.handle_get_dependencies,
+        "/dependents": _handlers.handle_get_dependents,
+        "/relations": _handlers.handle_get_task_relations,
+        "/is-blocked": _handlers.handle_is_task_blocked,
+    }
+
+    POST_PUBLIC_ROUTES = {
+        "/api/register": _handlers.handle_register,
+        "/api/login": _handlers.handle_login,
+        "/api/logout": _handlers.handle_logout,
+    }
+
+    POST_EXACT_ROUTES = {
+        "/api/tasks": _handlers.handle_create_task,
+        "/api/plan": _handlers.handle_create_plan,
+        "/api/change-password": _handlers.handle_change_password,
+        "/api/batch/update-status": _handlers.handle_batch_update_status,
+        "/api/batch/add-tags": _handlers.handle_batch_add_tags,
+        "/api/heartbeat/config": _handlers.handle_set_heartbeat_config,
+        "/api/user/location": _handlers.handle_set_user_location,
+        "/api/chat": _handlers.handle_chat,
+        "/api/chat/stream": _handlers.handle_chat_stream,
+        "/api/chat/clear": _handlers.handle_chat_clear,
+        "/api/config": _handlers.handle_set_config,
+        "/api/import": _handlers.handle_import,
+    }
+
+    POST_PREFIX_ROUTES = {
+        "/done": _handlers.handle_done_task,
+        "/postpone": _handlers.handle_postpone_task,
+        "/drop": _handlers.handle_drop_task,
+        "/start": _handlers.handle_start_task,
+        "/reopen": _handlers.handle_reopen_task,
+        "/subtasks": _handlers.handle_create_subtask,
+        "/bulk-subtasks": _handlers.handle_bulk_create_subtasks,
+        "/dependencies": _handlers.handle_add_dependency,
+        "/relations": _handlers.handle_add_task_relation,
+    }
+
+    def do_GET(self):
         t0 = time.time()
         parsed = urlparse(self.path)
         with request_context():
@@ -108,48 +169,25 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
                 query = parse_qs(parsed.query)
 
-                # 精确匹配路由表
-                exact_routes = {
-                    "/api/tags": handlers.handle_get_all_tags,
-                    "/api/heartbeat/config": handlers.handle_get_heartbeat_config,
-                    "/api/heartbeat/suggestion": handlers.handle_get_heartbeat_suggestion,
-                    "/api/user/location": handlers.handle_get_user_location,
-                    "/api/export": handlers.handle_export,
-                    "/api/advice": handlers.handle_advice,
-                    "/api/review": handlers.handle_review,
-                    "/api/provider": handlers.handle_provider,
-                    "/api/config": handlers.handle_get_config,
-                }
-
-                # 前缀匹配路由表 (suffix -> handler)
-                prefix_routes = {
-                    "/subtasks": handlers.handle_get_subtasks,
-                    "/with-subtasks": handlers.handle_get_task_with_subtasks,
-                    "/dependencies": handlers.handle_get_dependencies,
-                    "/dependents": handlers.handle_get_dependents,
-                    "/relations": handlers.handle_get_task_relations,
-                    "/is-blocked": handlers.handle_is_task_blocked,
-                }
-
                 if path == "/api/tasks":
                     if "q" in query:
-                        handlers.handle_search_tasks(self, query["q"][0], user_id)
+                        self._handlers.handle_search_tasks(self, query["q"][0], user_id)
                     elif "tag" in query:
-                        handlers.handle_get_tasks_by_tag(self, query["tag"][0], user_id)
+                        self._handlers.handle_get_tasks_by_tag(self, query["tag"][0], user_id)
                     else:
-                        handlers.handle_list_tasks(self, query.get("status", ["todo"])[0], user_id)
+                        self._handlers.handle_list_tasks(self, query.get("status", ["todo"])[0], user_id)
                 elif path == "/api/weather":
-                    handlers.handle_get_weather(self, user_id, parsed)
+                    self._handlers.handle_get_weather(self, user_id, parsed)
                 elif path == "/api/location":
-                    handlers.handle_get_location(self, user_id, parsed)
+                    self._handlers.handle_get_location(self, user_id, parsed)
                 elif path == "/api/me":
                     self.send_json({"user_id": user_id})
-                elif path in exact_routes:
-                    exact_routes[path](self, user_id)
+                elif path in self.GET_EXACT_ROUTES:
+                    self.GET_EXACT_ROUTES[path](self, user_id)
                 elif path.startswith("/api/tasks/"):
                     suffix = path.rsplit("/", 1)[-1]
-                    if suffix in prefix_routes:
-                        prefix_routes[suffix](self, path, user_id)
+                    if suffix in self.GET_PREFIX_ROUTES:
+                        self.GET_PREFIX_ROUTES[suffix](self, path, user_id)
                     else:
                         self.send_error(HTTPStatus.NOT_FOUND)
                 else:
@@ -160,7 +198,6 @@ class MomentumHandler(BaseHTTPRequestHandler):
     # ── POST ──────────────────────────────────────────────────────
 
     def do_POST(self) -> None:
-        from . import handlers
         t0 = time.time()
         parsed = urlparse(self.path)
         with request_context():
@@ -168,13 +205,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 path = parsed.path
 
                 # 认证端点 — 无需认证
-                public_routes = {
-                    "/api/register": handlers.handle_register,
-                    "/api/login": handlers.handle_login,
-                    "/api/logout": handlers.handle_logout,
-                }
-                if path in public_routes:
-                    public_routes[path](self)
+                if path in self.POST_PUBLIC_ROUTES:
+                    self.POST_PUBLIC_ROUTES[path](self)
                     return
 
                 # 其他端点 — 需要认证
@@ -182,39 +214,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 if user_id is None:
                     return
 
-                exact_routes = {
-                    "/api/tasks": handlers.handle_create_task,
-                    "/api/plan": handlers.handle_create_plan,
-                    "/api/change-password": handlers.handle_change_password,
-                    "/api/batch/update-status": handlers.handle_batch_update_status,
-                    "/api/batch/add-tags": handlers.handle_batch_add_tags,
-                    "/api/heartbeat/config": handlers.handle_set_heartbeat_config,
-                    "/api/user/location": handlers.handle_set_user_location,
-                    "/api/chat": handlers.handle_chat,
-                    "/api/chat/stream": handlers.handle_chat_stream,
-                    "/api/chat/clear": handlers.handle_chat_clear,
-                    "/api/config": handlers.handle_set_config,
-                    "/api/import": handlers.handle_import,
-                }
-
-                prefix_routes = {
-                    "/done": handlers.handle_done_task,
-                    "/postpone": handlers.handle_postpone_task,
-                    "/drop": handlers.handle_drop_task,
-                    "/start": handlers.handle_start_task,
-                    "/reopen": handlers.handle_reopen_task,
-                    "/subtasks": handlers.handle_create_subtask,
-                    "/bulk-subtasks": handlers.handle_bulk_create_subtasks,
-                    "/dependencies": handlers.handle_add_dependency,
-                    "/relations": handlers.handle_add_task_relation,
-                }
-
-                if path in exact_routes:
-                    exact_routes[path](self, user_id)
+                if path in self.POST_EXACT_ROUTES:
+                    self.POST_EXACT_ROUTES[path](self, user_id)
                 elif path.startswith("/api/tasks/"):
                     suffix = path.rsplit("/", 1)[-1]
-                    if suffix in prefix_routes:
-                        prefix_routes[suffix](self, path, user_id)
+                    if suffix in self.POST_PREFIX_ROUTES:
+                        self.POST_PREFIX_ROUTES[suffix](self, path, user_id)
                     else:
                         self.send_error(HTTPStatus.NOT_FOUND)
                 else:

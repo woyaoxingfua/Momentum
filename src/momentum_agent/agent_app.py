@@ -918,13 +918,23 @@ async def run_agent_message_stream(
     log.info("agent stream done (fallback): user=%r", user_id)
 
 
+# 缓存 AsyncOpenAI 客户端，避免每次对话都重建连接池
+_openai_client_cache: dict[tuple, object] = {}
+
+
 def build_openai_client(provider: ProviderConfig):
     from openai import AsyncOpenAI
 
+    key = (provider.api_key or "", provider.base_url or "")
+    cached = _openai_client_cache.get(key)
+    if cached is not None:
+        return cached
     kwargs = {"api_key": provider.api_key}
     if provider.base_url:
         kwargs["base_url"] = provider.base_url
-    return AsyncOpenAI(**kwargs)
+    client = AsyncOpenAI(**kwargs)
+    _openai_client_cache[key] = client
+    return client
 
 
 def build_model_settings(provider: ProviderConfig):

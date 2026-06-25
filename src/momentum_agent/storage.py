@@ -11,6 +11,9 @@ from .models import Priority, Task, TaskStatus, TaskRelation, TaskRelationType
 
 log = get_logger("storage")
 
+# Session 有效期：7 天
+SESSION_LIFETIME = timedelta(days=7)
+
 __all__ = [
     "TaskStore",
     "DEFAULT_USER",
@@ -32,7 +35,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -156,6 +160,16 @@ class TaskStore:
             log.info("migration: adding tags column")
             conn.execute("ALTER TABLE tasks ADD COLUMN tags TEXT")
 
+        # 迁移 sessions 表：添加过期时间列
+        session_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "expires_at" not in session_cols:
+            log.info("migration: adding expires_at column to sessions")
+            conn.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
+            # 给已有 session 一个默认过期时间：7 天后
+            from .auth import utcnow as auth_now
+            default_expires = encode_dt(auth_now() + SESSION_LIFETIME)
+            conn.execute("UPDATE sessions SET expires_at = ? WHERE expires_at IS NULL", (default_expires,))
+
     # ── auth ───────────────────────────────────────────────────────
 
     def register_user(self, user_id: str, display_name: str, password_hash: str) -> None:
@@ -180,19 +194,27 @@ class TaskStore:
                 log_security_event("login_failed", user_id, "密码错误")
                 return None
             token = generate_token()
+            now = auth_now()
             conn.execute(
-                "INSERT OR REPLACE INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
-                (token, user_id, encode_dt(auth_now())),
+                "INSERT OR REPLACE INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                (token, user_id, encode_dt(now), encode_dt(now + SESSION_LIFETIME)),
             )
         log.info("login user=%r", user_id)
         return token
 
     def validate_session(self, token: str) -> str | None:
+        from .auth import utcnow as auth_now
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT user_id FROM sessions WHERE token = ?", (token,)
+                "SELECT user_id, expires_at FROM sessions WHERE token = ?", (token,)
             ).fetchone()
-        return row["user_id"] if row else None
+            if not row:
+                return None
+            expires = decode_dt(row["expires_at"])
+            if expires and expires < auth_now():
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                return None
+            return row["user_id"]
 
     def logout_user(self, token: str) -> None:
         log.info("logout token=...%s", token[-8:])

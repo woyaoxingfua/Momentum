@@ -29,16 +29,14 @@ def send_static(handler: MomentumHandler, filename: str, content_type: str) -> N
 
 def handle_list_tasks(handler: MomentumHandler, status: str, user_id: str) -> None:
     from ..models import TaskStatus
-    from ..storage import TaskStore
     chosen = TaskStatus(status) if status in TaskStatus._value2member_map_ else TaskStatus.TODO
-    tasks = TaskStore(handler.db_path).list_tasks(chosen, user_id=user_id)
+    tasks = handler.store.list_tasks(chosen, user_id=user_id)
     from .utils import task_to_json
     handler.send_json({"tasks": [task_to_json(t) for t in tasks]})
 
 
 def handle_create_task(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import create_task_from_text
-    from ..storage import TaskStore
     from .utils import task_to_json
     payload = handler.read_json()
     text = str(payload.get("text", "")).strip()
@@ -46,32 +44,30 @@ def handle_create_task(handler: MomentumHandler, user_id: str) -> None:
     if not text and not images:
         handler.send_json({"error": "任务内容不能为空。"}, HTTPStatus.BAD_REQUEST)
         return
-    store = TaskStore(handler.db_path)
+    store = handler.store
     message = create_task_from_text(store, text, user_id=user_id, images=images if images else None)
     handler.send_json({"message": message, "tasks": [task_to_json(t) for t in store.list_tasks(user_id=user_id)]})
 
 
 def handle_create_plan(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import create_plan_from_text
-    from ..storage import TaskStore
     from .utils import task_to_json
     payload = handler.read_json()
     text = str(payload.get("text", "")).strip()
     if not text:
         handler.send_json({"error": "任务内容不能为空。"}, HTTPStatus.BAD_REQUEST)
         return
-    store = TaskStore(handler.db_path)
+    store = handler.store
     message = create_plan_from_text(store, text, user_id=user_id)
     handler.send_json({"message": message, "tasks": [task_to_json(t) for t in store.list_tasks(user_id=user_id)]})
 
 
 def handle_done_task(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id
     task_id = extract_task_id(handler, path, "done")
     if task_id is None:
         return
-    store = TaskStore(handler.db_path)
+    store = handler.store
     next_task = store.complete_recurring_task(task_id, user_id=user_id)
     if next_task and next_task.recurrence:
         handler.send_json({"message": f"已创建下一期任务 #{next_task.id}：{next_task.title}"})
@@ -83,7 +79,6 @@ def handle_done_task(handler: MomentumHandler, path: str, user_id: str) -> None:
 
 def handle_edit_task(handler: MomentumHandler, path: str, user_id: str) -> None:
     from ..agent_app import edit_task_from_params
-    from ..storage import TaskStore
     try:
         task_id = int(path.strip("/").split("/")[2])
     except (IndexError, ValueError):
@@ -91,7 +86,7 @@ def handle_edit_task(handler: MomentumHandler, path: str, user_id: str) -> None:
         return
     payload = handler.read_json()
     message = edit_task_from_params(
-        TaskStore(handler.db_path), task_id,
+        handler.store, task_id,
         title=payload.get("title"), due_at=payload.get("due_at"),
         priority=payload.get("priority"), estimated_minutes=payload.get("estimated_minutes"),
         notes=payload.get("notes"), tags=payload.get("tags"), user_id=user_id,
@@ -101,50 +96,45 @@ def handle_edit_task(handler: MomentumHandler, path: str, user_id: str) -> None:
 
 def handle_postpone_task(handler: MomentumHandler, path: str, user_id: str) -> None:
     from ..agent_app import postpone_task_cmd
-    from ..storage import TaskStore
     from .utils import extract_task_id
     task_id = extract_task_id(handler, path, "postpone")
     if task_id is None:
         return
     payload = handler.read_json()
     days = int(payload.get("days", 3))
-    handler.send_json({"message": postpone_task_cmd(TaskStore(handler.db_path), task_id, days, user_id=user_id)})
+    handler.send_json({"message": postpone_task_cmd(handler.store, task_id, days, user_id=user_id)})
 
 
 def handle_drop_task(handler: MomentumHandler, path: str, user_id: str) -> None:
     from ..agent_app import drop_task_cmd
-    from ..storage import TaskStore
     from .utils import extract_task_id
     task_id = extract_task_id(handler, path, "drop")
     if task_id is None:
         return
-    handler.send_json({"message": drop_task_cmd(TaskStore(handler.db_path), task_id, user_id=user_id)})
+    handler.send_json({"message": drop_task_cmd(handler.store, task_id, user_id=user_id)})
 
 
 def handle_start_task(handler: MomentumHandler, path: str, user_id: str) -> None:
     from ..agent_app import start_task_cmd
-    from ..storage import TaskStore
     from .utils import extract_task_id
     task_id = extract_task_id(handler, path, "start")
     if task_id is None:
         return
-    handler.send_json({"message": start_task_cmd(TaskStore(handler.db_path), task_id, user_id=user_id)})
+    handler.send_json({"message": start_task_cmd(handler.store, task_id, user_id=user_id)})
 
 
 def handle_reopen_task(handler: MomentumHandler, path: str, user_id: str) -> None:
     from ..agent_app import reopen_task_cmd
-    from ..storage import TaskStore
     from .utils import extract_task_id
     task_id = extract_task_id(handler, path, "reopen")
     if task_id is None:
         return
-    handler.send_json({"message": reopen_task_cmd(TaskStore(handler.db_path), task_id, user_id=user_id)})
+    handler.send_json({"message": reopen_task_cmd(handler.store, task_id, user_id=user_id)})
 
 
 def handle_search_tasks(handler: MomentumHandler, query: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import task_to_json
-    results = TaskStore(handler.db_path).search_tasks(query, user_id=user_id)
+    results = handler.store.search_tasks(query, user_id=user_id)
     handler.send_json({"tasks": [task_to_json(t) for t in results]})
 
 
@@ -152,7 +142,6 @@ def handle_search_tasks(handler: MomentumHandler, query: str, user_id: str) -> N
 
 def handle_register(handler: MomentumHandler) -> None:
     from ..auth import hash_password
-    from ..storage import TaskStore
     payload = handler.read_json()
     user_id = str(payload.get("user_id", "")).strip()
     display_name = str(payload.get("display_name", "")).strip()
@@ -164,21 +153,20 @@ def handle_register(handler: MomentumHandler) -> None:
         handler.send_json({"error": "密码至少 4 位"}, HTTPStatus.BAD_REQUEST)
         return
     try:
-        TaskStore(handler.db_path).register_user(user_id, display_name or user_id, hash_password(password))
+        handler.store.register_user(user_id, display_name or user_id, hash_password(password))
         handler.send_json({"message": "注册成功，请登录"})
     except Exception:
         handler.send_json({"error": "用户名已存在"}, HTTPStatus.CONFLICT)
 
 
 def handle_login(handler: MomentumHandler) -> None:
-    from ..storage import TaskStore
     payload = handler.read_json()
     user_id = str(payload.get("user_id", "")).strip()
     password = str(payload.get("password", "")).strip()
     if not user_id or not password:
         handler.send_json({"error": "用户名和密码不能为空"}, HTTPStatus.BAD_REQUEST)
         return
-    token = TaskStore(handler.db_path).login_user(user_id, password)
+    token = handler.store.login_user(user_id, password)
     if not token:
         handler.send_json({"error": "用户名或密码错误"}, HTTPStatus.UNAUTHORIZED)
         return
@@ -186,15 +174,13 @@ def handle_login(handler: MomentumHandler) -> None:
 
 
 def handle_logout(handler: MomentumHandler) -> None:
-    from ..storage import TaskStore
     token = handler.headers.get("Authorization", "").replace("Bearer ", "")
     if token:
-        TaskStore(handler.db_path).logout_user(token)
+        handler.store.logout_user(token)
     handler.send_json({"message": "已登出"})
 
 
 def handle_change_password(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
     payload = handler.read_json()
     old_pw = str(payload.get("old_password", "")).strip()
     new_pw = str(payload.get("new_password", "")).strip()
@@ -204,7 +190,7 @@ def handle_change_password(handler: MomentumHandler, user_id: str) -> None:
     if len(new_pw) < 4:
         handler.send_json({"error": "新密码至少 4 位"}, HTTPStatus.BAD_REQUEST)
         return
-    ok = TaskStore(handler.db_path).change_password(user_id, old_pw, new_pw)
+    ok = handler.store.change_password(user_id, old_pw, new_pw)
     if not ok:
         handler.send_json({"error": "旧密码错误"}, HTTPStatus.FORBIDDEN)
         return
@@ -215,20 +201,18 @@ def handle_change_password(handler: MomentumHandler, user_id: str) -> None:
 
 def handle_get_config(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import get_user_config_cmd
-    from ..storage import TaskStore
-    handler.send_json({"config": get_user_config_cmd(TaskStore(handler.db_path), user_id=user_id)})
+    handler.send_json({"config": get_user_config_cmd(handler.store, user_id=user_id)})
 
 
 def handle_set_config(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import set_user_config_cmd
-    from ..storage import TaskStore
     payload = handler.read_json()
     key = str(payload.get("key", "")).strip()
     value = str(payload.get("value", "")).strip()
     if not key:
         handler.send_json({"error": "配置键不能为空。"}, HTTPStatus.BAD_REQUEST)
         return
-    message = set_user_config_cmd(TaskStore(handler.db_path), key, value, user_id=user_id)
+    message = set_user_config_cmd(handler.store, key, value, user_id=user_id)
     handler.send_json({"message": message})
 
 
@@ -290,14 +274,12 @@ def handle_chat_clear(handler: MomentumHandler, user_id: str) -> None:
 
 def handle_advice(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import local_advice
-    from ..storage import TaskStore
-    handler.send_json({"advice": local_advice(TaskStore(handler.db_path), user_id=user_id)})
+    handler.send_json({"advice": local_advice(handler.store, user_id=user_id)})
 
 
 def handle_review(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import local_review
-    from ..storage import TaskStore
-    handler.send_json({"review": local_review(TaskStore(handler.db_path), user_id=user_id)})
+    handler.send_json({"review": local_review(handler.store, user_id=user_id)})
 
 
 def handle_provider(handler: MomentumHandler) -> None:
@@ -308,8 +290,7 @@ def handle_provider(handler: MomentumHandler) -> None:
 # ── 导出导入 ──────────────────────────────────────────────────────
 
 def handle_export(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
-    data = TaskStore(handler.db_path).export_user_data(user_id=user_id)
+    data = handler.store.export_user_data(user_id=user_id)
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
     handler._last_status = 200
     handler.send_response(HTTPStatus.OK)
@@ -321,14 +302,13 @@ def handle_export(handler: MomentumHandler, user_id: str) -> None:
 
 
 def handle_import(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
     payload = handler.read_json()
     data = payload.get("data")
     if not data or not isinstance(data, dict):
         handler.send_json({"error": "请提供 JSON 数据。"}, HTTPStatus.BAD_REQUEST)
         return
     try:
-        n = TaskStore(handler.db_path).import_user_data(data, user_id=user_id)
+        n = handler.store.import_user_data(data, user_id=user_id)
         handler.send_json({"message": f"已导入 {n} 个任务。"})
     except Exception as exc:
         handler.send_json({"error": f"导入失败：{exc}"}, HTTPStatus.BAD_REQUEST)
@@ -337,15 +317,13 @@ def handle_import(handler: MomentumHandler, user_id: str) -> None:
 # ── 标签 ──────────────────────────────────────────────────────────
 
 def handle_get_all_tags(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
-    tags = TaskStore(handler.db_path).get_all_tags(user_id=user_id)
+    tags = handler.store.get_all_tags(user_id=user_id)
     handler.send_json({"tags": tags})
 
 
 def handle_get_tasks_by_tag(handler: MomentumHandler, tag: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import task_to_json
-    tasks = TaskStore(handler.db_path).get_tasks_by_tag(tag, user_id=user_id)
+    tasks = handler.store.get_tasks_by_tag(tag, user_id=user_id)
     handler.send_json({"tasks": [task_to_json(t) for t in tasks]})
 
 
@@ -353,7 +331,6 @@ def handle_get_tasks_by_tag(handler: MomentumHandler, tag: str, user_id: str) ->
 
 def handle_batch_update_status(handler: MomentumHandler, user_id: str) -> None:
     from ..models import TaskStatus
-    from ..storage import TaskStore
     payload = handler.read_json()
     task_ids = payload.get("task_ids", [])
     status_str = payload.get("status")
@@ -366,7 +343,7 @@ def handle_batch_update_status(handler: MomentumHandler, user_id: str) -> None:
         handler.send_json({"error": "无效的 status。"}, HTTPStatus.BAD_REQUEST)
         return
     try:
-        updated = TaskStore(handler.db_path).batch_update_status(
+        updated = handler.store.batch_update_status(
             [int(tid) for tid in task_ids], status, user_id=user_id
         )
         handler.send_json({"message": f"已更新 {updated} 个任务。"})
@@ -375,7 +352,6 @@ def handle_batch_update_status(handler: MomentumHandler, user_id: str) -> None:
 
 
 def handle_batch_add_tags(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
     payload = handler.read_json()
     task_ids = payload.get("task_ids", [])
     tags = payload.get("tags", [])
@@ -383,7 +359,7 @@ def handle_batch_add_tags(handler: MomentumHandler, user_id: str) -> None:
         handler.send_json({"error": "请提供 task_ids 和 tags 数组。"}, HTTPStatus.BAD_REQUEST)
         return
     try:
-        updated = TaskStore(handler.db_path).batch_add_tags(
+        updated = handler.store.batch_add_tags(
             [int(tid) for tid in task_ids], tags, user_id=user_id
         )
         handler.send_json({"message": f"已更新 {updated} 个任务。"})
@@ -394,15 +370,13 @@ def handle_batch_add_tags(handler: MomentumHandler, user_id: str) -> None:
 # ── 心跳 ──────────────────────────────────────────────────────────
 
 def handle_get_heartbeat_config(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
-    config = TaskStore(handler.db_path).get_heartbeat_config(user_id=user_id)
+    config = handler.store.get_heartbeat_config(user_id=user_id)
     handler.send_json({"config": config})
 
 
 def handle_set_heartbeat_config(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
     payload = handler.read_json()
-    store = TaskStore(handler.db_path)
+    store = handler.store
     config = store.set_heartbeat_config(
         enabled=payload.get("enabled"),
         start_hour=payload.get("start_hour"),
@@ -416,8 +390,7 @@ def handle_set_heartbeat_config(handler: MomentumHandler, user_id: str) -> None:
 
 def handle_get_heartbeat_suggestion(handler: MomentumHandler, user_id: str) -> None:
     from ..context import build_user_context, heartbeat_suggestion
-    from ..storage import TaskStore
-    store = TaskStore(handler.db_path)
+    store = handler.store
     tasks = store.list_tasks(status=None, user_id=user_id)
     ctx = build_user_context(tasks)
     suggestion = heartbeat_suggestion(tasks, ctx)
@@ -446,11 +419,10 @@ def _get_location_service():
 def handle_get_weather(handler: MomentumHandler, user_id: str, parsed) -> None:
     import random
     from datetime import datetime
-    from ..storage import TaskStore
     query = parse_qs(parsed.query)
     city = query.get("city", [None])[0]
     if not city:
-        saved_city = TaskStore(handler.db_path).get_memory("user_location", user_id=user_id)
+        saved_city = handler.store.get_memory("user_location", user_id=user_id)
         city = saved_city or "北京"
     loc_info = _get_location_service().get_location_info(city)
     city_info = {"lat": loc_info["latitude"], "lon": loc_info["longitude"], "country": loc_info["country"]}
@@ -479,11 +451,10 @@ def handle_get_weather(handler: MomentumHandler, user_id: str, parsed) -> None:
 
 
 def handle_get_location(handler: MomentumHandler, user_id: str, parsed) -> None:
-    from ..storage import TaskStore
     query = parse_qs(parsed.query)
     city = query.get("city", [None])[0]
     if not city:
-        saved_city = TaskStore(handler.db_path).get_memory("user_location", user_id=user_id)
+        saved_city = handler.store.get_memory("user_location", user_id=user_id)
         city = saved_city or "北京"
     info = _get_location_service().get_location_info(city)
     handler.send_json({
@@ -493,8 +464,7 @@ def handle_get_location(handler: MomentumHandler, user_id: str, parsed) -> None:
 
 
 def handle_get_user_location(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
-    city = TaskStore(handler.db_path).get_memory("user_location", user_id=user_id)
+    city = handler.store.get_memory("user_location", user_id=user_id)
     if not city:
         handler.send_json({"city": "北京", "is_default": True})
     else:
@@ -502,37 +472,34 @@ def handle_get_user_location(handler: MomentumHandler, user_id: str) -> None:
 
 
 def handle_set_user_location(handler: MomentumHandler, user_id: str) -> None:
-    from ..storage import TaskStore
     payload = handler.read_json()
     city = payload.get("city")
     if not city:
         handler.send_json({"error": "需要提供城市名称"}, HTTPStatus.BAD_REQUEST)
         return
-    TaskStore(handler.db_path).set_memory("user_location", city, user_id=user_id)
+    handler.store.set_memory("user_location", city, user_id=user_id)
     handler.send_json({"message": f"已设置默认位置为：{city}", "city": city})
 
 
 # ── 子任务 ──────────────────────────────────────────────────────
 
 def handle_get_subtasks(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path, task_to_json
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
         handler.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
         return
-    subtasks = TaskStore(handler.db_path).get_subtasks(task_id, user_id=user_id)
+    subtasks = handler.store.get_subtasks(task_id, user_id=user_id)
     handler.send_json({"subtasks": [task_to_json(t) for t in subtasks]})
 
 
 def handle_get_task_with_subtasks(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path, task_to_json
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
         handler.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
         return
-    task = TaskStore(handler.db_path).get_task_with_subtasks(task_id, user_id=user_id)
+    task = handler.store.get_task_with_subtasks(task_id, user_id=user_id)
     if not task:
         handler.send_json({"error": "任务不存在"}, HTTPStatus.NOT_FOUND)
         return
@@ -545,7 +512,6 @@ def handle_get_task_with_subtasks(handler: MomentumHandler, path: str, user_id: 
 def handle_create_subtask(handler: MomentumHandler, path: str, user_id: str) -> None:
     from ..models import Priority
     from ..parser import parse_task_text
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path, task_to_json
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
@@ -562,7 +528,7 @@ def handle_create_subtask(handler: MomentumHandler, path: str, user_id: str) -> 
     parsed = parse_task_text(f"{due_at_str or ''} {title}")
     chosen_priority = priority if priority_str in Priority._value2member_map_ else parsed.priority
     estimated_minutes = payload.get("estimated_minutes") or parsed.estimated_minutes
-    task = TaskStore(handler.db_path).create_subtask(
+    task = handler.store.create_subtask(
         task_id, title, due_at=parsed.due_at, priority=chosen_priority,
         estimated_minutes=estimated_minutes, notes=payload.get("notes"),
         tags=payload.get("tags"), user_id=user_id,
@@ -571,7 +537,6 @@ def handle_create_subtask(handler: MomentumHandler, path: str, user_id: str) -> 
 
 
 def handle_bulk_create_subtasks(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path, task_to_json
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
@@ -582,7 +547,7 @@ def handle_bulk_create_subtasks(handler: MomentumHandler, path: str, user_id: st
     if not subtasks:
         handler.send_json({"error": "需要提供子任务列表"}, HTTPStatus.BAD_REQUEST)
         return
-    created = TaskStore(handler.db_path).bulk_create_subtasks(task_id, subtasks, user_id=user_id)
+    created = handler.store.bulk_create_subtasks(task_id, subtasks, user_id=user_id)
     handler.send_json({
         "message": f"已创建 {len(created)} 个子任务",
         "tasks": [task_to_json(t) for t in created]
@@ -592,35 +557,32 @@ def handle_bulk_create_subtasks(handler: MomentumHandler, path: str, user_id: st
 # ── 任务关系 ──────────────────────────────────────────────────────
 
 def handle_get_dependencies(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path, task_to_json
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
         handler.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
         return
-    deps = TaskStore(handler.db_path).get_dependencies(task_id, user_id=user_id)
+    deps = handler.store.get_dependencies(task_id, user_id=user_id)
     handler.send_json({"dependencies": [task_to_json(t) for t in deps]})
 
 
 def handle_get_dependents(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path, task_to_json
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
         handler.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
         return
-    deps = TaskStore(handler.db_path).get_dependents(task_id, user_id=user_id)
+    deps = handler.store.get_dependents(task_id, user_id=user_id)
     handler.send_json({"dependents": [task_to_json(t) for t in deps]})
 
 
 def handle_get_task_relations(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
         handler.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
         return
-    relations = TaskStore(handler.db_path).get_task_relations(task_id, user_id=user_id)
+    relations = handler.store.get_task_relations(task_id, user_id=user_id)
     handler.send_json({"relations": [
         {"id": r.id, "source_task_id": r.source_task_id, "target_task_id": r.target_task_id,
          "relation_type": r.relation_type.value, "created_at": r.created_at.isoformat()}
@@ -629,7 +591,6 @@ def handle_get_task_relations(handler: MomentumHandler, path: str, user_id: str)
 
 
 def handle_add_dependency(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
@@ -640,7 +601,7 @@ def handle_add_dependency(handler: MomentumHandler, path: str, user_id: str) -> 
     if not depends_on:
         handler.send_json({"error": "需要提供依赖的任务ID"}, HTTPStatus.BAD_REQUEST)
         return
-    relation = TaskStore(handler.db_path).add_dependency(task_id, depends_on, user_id=user_id)
+    relation = handler.store.add_dependency(task_id, depends_on, user_id=user_id)
     if not relation:
         handler.send_json({"error": "无法创建依赖关系"}, HTTPStatus.BAD_REQUEST)
         return
@@ -649,7 +610,6 @@ def handle_add_dependency(handler: MomentumHandler, path: str, user_id: str) -> 
 
 def handle_add_task_relation(handler: MomentumHandler, path: str, user_id: str) -> None:
     from ..models import TaskRelationType
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
@@ -666,7 +626,7 @@ def handle_add_task_relation(handler: MomentumHandler, path: str, user_id: str) 
     except ValueError:
         handler.send_json({"error": "无效的关系类型"}, HTTPStatus.BAD_REQUEST)
         return
-    relation = TaskStore(handler.db_path).add_task_relation(task_id, target_id, rel_type, user_id=user_id)
+    relation = handler.store.add_task_relation(task_id, target_id, rel_type, user_id=user_id)
     if not relation:
         handler.send_json({"error": "无法创建关系"}, HTTPStatus.BAD_REQUEST)
         return
@@ -674,11 +634,10 @@ def handle_add_task_relation(handler: MomentumHandler, path: str, user_id: str) 
 
 
 def handle_is_task_blocked(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..storage import TaskStore
     from .utils import extract_task_id_from_path
     task_id = extract_task_id_from_path(path)
     if task_id < 0:
         handler.send_json({"error": "无效的任务ID"}, HTTPStatus.BAD_REQUEST)
         return
-    is_blocked = TaskStore(handler.db_path).is_task_blocked(task_id, user_id=user_id)
+    is_blocked = handler.store.is_task_blocked(task_id, user_id=user_id)
     handler.send_json({"is_blocked": is_blocked})

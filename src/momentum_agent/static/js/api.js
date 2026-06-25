@@ -1,34 +1,58 @@
 const REQUEST_TIMEOUT_MS = 30000;
+const pendingRequests = new Map();
+
+function requestKey(url, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  return `${method}:${url}:${options.body || ""}`;
+}
 
 export async function requestJson(url, options = {}) {
   const token = localStorage.getItem("momentum_token");
   const headers = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
+  const method = (options.method || "GET").toUpperCase();
+  const key = requestKey(url, options);
+
+  // 写操作去重：相同的 POST/PUT/DELETE 请求正在进行时直接复用
+  if (method !== "GET" && method !== "HEAD" && pendingRequests.has(key)) {
+    return pendingRequests.get(key);
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, { headers, ...options, signal: controller.signal });
-    clearTimeout(timeoutId);
 
-    if (response.status === 401) {
-      localStorage.removeItem("momentum_token");
-      window.location.href = "/login.html";
-      throw new Error("未登录");
-    }
+  const promise = (async () => {
+    try {
+      const response = await fetch(url, { headers, ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
 
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "请求失败");
+      if (response.status === 401) {
+        localStorage.removeItem("momentum_token");
+        window.location.href = "/login.html";
+        throw new Error("未登录");
+      }
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "请求失败");
+      }
+      return payload;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.name === "AbortError") {
+        throw new Error("请求超时，请检查网络或稍后重试");
+      }
+      throw err;
     }
-    return payload;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    if (err.name === "AbortError") {
-      throw new Error("请求超时，请检查网络或稍后重试");
-    }
-    throw err;
+  })();
+
+  if (method !== "GET" && method !== "HEAD") {
+    pendingRequests.set(key, promise);
+    promise.finally(() => pendingRequests.delete(key));
   }
+
+  return promise;
 }
 
 export async function logout() {
