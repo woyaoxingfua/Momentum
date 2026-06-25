@@ -190,9 +190,13 @@ def handle_login(handler: MomentumHandler) -> None:
         new_attempts = attempts + 1
         if new_attempts >= MAX_LOGIN_ATTEMPTS:
             _login_attempts[client_ip] = (new_attempts, now + LOGIN_LOCKOUT_SECONDS)
+            handler.send_json(
+                {"error": f"登录失败次数过多，请 {LOGIN_LOCKOUT_SECONDS} 秒后再试"},
+                HTTPStatus.TOO_MANY_REQUESTS,
+            )
         else:
             _login_attempts[client_ip] = (new_attempts, 0.0)
-        handler.send_json({"error": "用户名或密码错误"}, HTTPStatus.UNAUTHORIZED)
+            handler.send_json({"error": "用户名或密码错误"}, HTTPStatus.UNAUTHORIZED)
         return
     _login_attempts.pop(client_ip, None)
     handler.send_json({"token": token, "user_id": user_id})
