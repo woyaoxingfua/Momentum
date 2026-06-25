@@ -27,7 +27,7 @@ def test_factory_mysql_url(monkeypatch):
 
 def test_factory_rejects_unsupported_url():
     with pytest.raises(ValueError, match="不支持的数据库 URL"):
-        create_task_store("postgresql://user:pass@localhost/db")
+        create_task_store("oracle://user:pass@localhost/db")
 
 
 def test_factory_uses_environment_variable(tmp_path, monkeypatch):
