@@ -1,4 +1,4 @@
-import { api, getToken } from "/js/api.js";
+import { requestJson } from "/js/api.js";
 
 const COLORS = {
   accent: "#f59e0b",
@@ -18,7 +18,7 @@ const CHART_DEFAULTS = {
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      labels: { color: COLORS.text2, font: { family: "JetBrains Mono", size: 11 } },
+      labels: { color: COLORS.text2, font: { family: "JetBrains Mono, monospace", size: 11 } },
     },
     tooltip: {
       backgroundColor: "#1f1e1c",
@@ -27,30 +27,30 @@ const CHART_DEFAULTS = {
       borderColor: COLORS.grid,
       borderWidth: 1,
       padding: 10,
-      titleFont: { family: "Noto Serif SC", size: 13 },
-      bodyFont: { family: "JetBrains Mono", size: 12 },
+      titleFont: { family: "Noto Serif SC, serif", size: 13 },
+      bodyFont: { family: "JetBrains Mono, monospace", size: 12 },
     },
   },
   scales: {
     x: {
       grid: { color: COLORS.grid },
-      ticks: { color: COLORS.text3, font: { family: "JetBrains Mono", size: 10 } },
+      ticks: { color: COLORS.text3, font: { family: "JetBrains Mono, monospace", size: 10 } },
     },
     y: {
       grid: { color: COLORS.grid },
-      ticks: { color: COLORS.text3, font: { family: "JetBrains Mono", size: 10 } },
+      ticks: { color: COLORS.text3, font: { family: "JetBrains Mono, monospace", size: 10 } },
     },
   },
 };
 
 async function init() {
-  if (!getToken()) {
+  if (!localStorage.getItem("momentum_token")) {
     window.location.href = "/login.html";
     return;
   }
 
   try {
-    const data = await api.get("/api/stats");
+    const data = await requestJson("/api/stats");
     renderStats(data);
     renderCharts(data);
     loadInsights();
@@ -71,7 +71,7 @@ function renderStats(data) {
 
 function renderCharts(data) {
   Chart.defaults.color = COLORS.text2;
-  Chart.defaults.font.family = "JetBrains Mono";
+  Chart.defaults.font.family = "JetBrains Mono, monospace";
 
   // 每日趋势
   new Chart(document.getElementById("dailyChart"), {
@@ -187,7 +187,7 @@ function renderCharts(data) {
 
 async function loadInsights() {
   try {
-    const res = await api.get("/api/advice");
+    const res = await requestJson("/api/advice");
     const list = document.getElementById("insightsList");
     if (res.insights && res.insights.length > 0) {
       list.innerHTML = res.insights
@@ -200,7 +200,7 @@ async function loadInsights() {
     } else {
       list.innerHTML = `<p class="muted">暂无足够数据生成洞察。继续使用 Momentum，我会逐渐了解你的工作模式。</p>`;
     }
-  } catch (e) {
+  } catch {
     document.getElementById("insightsList").innerHTML = `<p class="muted">洞察加载失败</p>`;
   }
 }

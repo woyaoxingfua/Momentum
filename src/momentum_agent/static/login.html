@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#fafafa" />
+  <meta name="theme-color" content="#121110" />
   <title>Momentum — 登录</title>
   <link rel="stylesheet" href="/app.css" />
   <link rel="icon" type="image/svg+xml" href="/icon.svg" />
@@ -86,8 +86,8 @@
       if (mode === "register") {
         const dn = qs("#displayName").value.trim();
         body.display_name = dn || userId;
-        if (password.length < 4) {
-          errEl.textContent = "密码至少 4 位";
+        if (password.length < 8) {
+          errEl.textContent = "密码至少 8 位";
           errEl.style.display = "block";
           return;
         }

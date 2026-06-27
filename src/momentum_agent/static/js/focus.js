@@ -1,5 +1,8 @@
 /* ── Focus Timer ────────────────────────────────────────────── */
 
+import { requestJson } from "./api.js";
+import { loadTasks } from "./tasks.js";
+
 let _focusTimerState = {
   taskId: null,
   taskTitle: "",
@@ -14,7 +17,25 @@ let _focusTimerState = {
 
 let _focusBreakIntervalId = null;
 
-function focusInit() {
+// 简易提示，避免引入额外依赖
+function _showToast(msg) {
+  const existing = document.getElementById("_focusToast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.id = "_focusToast";
+  toast.style.cssText = `
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--accent); padding: 8px 16px;
+    font-size: 13px; z-index: 9999; pointer-events: none;
+    box-shadow: var(--shadow);
+  `;
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2000);
+}
+
+export function focusInit() {
   const durBtns = document.querySelectorAll(".focus-dur-btn");
   durBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -44,26 +65,30 @@ function focusInit() {
   populateFocusTaskSelect();
 }
 
-function populateFocusTaskSelect() {
+async function populateFocusTaskSelect() {
   const select = document.getElementById("focusTaskSelect");
   if (!select) return;
   select.innerHTML = '<option value="">选择任务...</option>';
-  const tasks = window._tasks || [];
-  tasks
-    .filter((t) => t.status === "todo")
-    .forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t.id;
-      opt.textContent = t.title;
-      select.appendChild(opt);
-    });
+  try {
+    const tasks = await loadTasks();
+    tasks
+      .filter((t) => t.status === "todo" || t.status === "doing")
+      .forEach((t) => {
+        const opt = document.createElement("option");
+        opt.value = t.id;
+        opt.textContent = t.title;
+        select.appendChild(opt);
+      });
+  } catch {
+    // 静默失败，用户可能还没登录
+  }
 }
 
 async function loadFocusStats() {
   const stats = document.getElementById("focusStats");
   if (!stats) return;
   try {
-    const data = await api.get("/api/focus/stats");
+    const data = await requestJson("/api/focus/stats");
     const todayMins = data.total_minutes_today || 0;
     const weekMins = data.total_minutes_week || 0;
     const sessions = data.total_sessions_week || 0;
@@ -99,7 +124,7 @@ async function focusStart() {
     : "";
 
   if (!taskId) {
-    showToast("请先选择一个任务");
+    _showToast("请先选择一个任务");
     return;
   }
 
@@ -107,8 +132,11 @@ async function focusStart() {
 
   // 通知后端记录
   try {
-    await api.post("/api/focus/start", { task_id: taskId, duration_minutes: duration });
-  } catch (e) {
+    await requestJson("/api/focus/start", {
+      method: "POST",
+      body: JSON.stringify({ task_id: taskId, duration_minutes: duration }),
+    });
+  } catch {
     // 静默失败，不阻塞计时器
   }
 
@@ -148,7 +176,7 @@ function focusOnComplete() {
 
   // 浏览器通知
   if (Notification.permission === "granted") {
-    new Notification("专注完成！", { body: "该休息一下了 ☕", icon: "" });
+    new Notification("专注完成！", { body: "该休息一下了 ☕" });
   } else if (Notification.permission !== "denied") {
     Notification.requestPermission();
   }
@@ -214,10 +242,8 @@ async function focusDone() {
   // 自动完成关联任务
   if (_focusTimerState.taskId) {
     try {
-      await api.post(`/done${_focusTimerState.taskId}`);
-      if (typeof window.refreshTasks === "function") {
-        await window.refreshTasks();
-      }
+      await requestJson(`/api/tasks/${_focusTimerState.taskId}/done`, { method: "POST" });
+      await loadTasks();
     } catch (_) {}
   }
 

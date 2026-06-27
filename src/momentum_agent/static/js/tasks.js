@@ -101,10 +101,10 @@ function actionButtons(task) {
     buttons.push(`<button data-start="${task.id}" title="开始做" class="primary">开始</button>`);
     buttons.push(`<button data-done="${task.id}" title="完成">完成</button>`);
     buttons.push(`<button data-postpone="${task.id}" title="推迟">推迟</button>`);
-    buttons.push(`<button data-drop="${task.id}" title="放弃" class="danger-text">放弃</button>`);
+    buttons.push(`<button data-drop="${task.id}" title="放弃" class="danger">放弃</button>`);
   } else if (task.status === "doing") {
     buttons.push(`<button data-done="${task.id}" title="完成" class="primary">完成</button>`);
-    buttons.push(`<button data-drop="${task.id}" title="放弃" class="danger-text">放弃</button>`);
+    buttons.push(`<button data-drop="${task.id}" title="放弃" class="danger">放弃</button>`);
   } else {
     buttons.push(`<button data-reopen="${task.id}" title="重新打开">重开</button>`);
   }

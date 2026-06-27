@@ -1,6 +1,6 @@
 /* ── Browser Notifications ───────────────────────────────────── */
 
-import { api } from "/js/api.js";
+import { requestJson } from "./api.js";
 
 let _lastNotifiedIds = new Set();
 
@@ -22,7 +22,7 @@ async function checkUpcoming() {
   if (document.visibilityState === "visible") return; // 页面可见时不弹原生通知
 
   try {
-    const data = await api.get("/api/notifications/upcoming");
+    const data = await requestJson("/api/notifications/upcoming");
     for (const n of data.notifications) {
       const key = `${n.id}-${n.minutes_left}`;
       if (_lastNotifiedIds.has(key)) continue;
@@ -34,7 +34,7 @@ async function checkUpcoming() {
         tag: String(n.id),
       });
     }
-  } catch (_) {
+  } catch {
     // 静默失败
   }
 }

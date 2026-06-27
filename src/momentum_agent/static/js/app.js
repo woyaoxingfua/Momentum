@@ -4,6 +4,7 @@ import { initChat, setAfterChat, sendChat, sendToAgent } from "./chat.js";
 import { initAdvice, loadAdvice, loadReview, loadAdviceWithAI, loadReviewWithAI } from "./advice.js";
 import { initConfig, loadConfig, saveConfig, setOnConfigSaved } from "./config.js";
 import { initHeartbeat, loadHeartbeatConfig, startHeartbeatChecks } from "./heartbeat.js";
+import { initNotifications } from "./notifications.js";
 
 let onAfterChat = null;
 
@@ -588,6 +589,9 @@ function init() {
 
   // ── Mobile nav ──
   initMobileNav();
+
+  // Browser notifications
+  initNotifications();
 
   // Focus timer
   import("./focus.js").then(({ focusInit }) => focusInit());
