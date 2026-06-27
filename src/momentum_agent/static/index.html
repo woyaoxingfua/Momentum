@@ -71,7 +71,9 @@
               <button class="status-tab" data-status="done" role="tab" aria-selected="false">已完成</button>
               <button class="status-tab" data-status="dropped" role="tab" aria-selected="false">已放弃</button>
             </div>
+            <button id="sortButton" class="ghost" title="按推荐排序">智能排序</button>
             <div class="heading-actions">
+              <a href="/stats.html" class="ghost" style="display:inline-flex;align-items:center;height:var(--input-h);padding:0 var(--space-3);font-size:12px;">仪表盘</a>
               <input id="searchInput" placeholder="搜索任务..." class="search-input" aria-label="搜索任务" />
               <button id="refreshButton" class="ghost" title="刷新">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23,4 23,10 17,10"/><polyline points="1,20 1,14 7,14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -153,6 +155,12 @@
           <summary>偏好设置</summary>
           <div class="config-form">
             <h4 class="config-section-title">AI 配置</h4>
+            <label>AI 提供商
+              <select id="configProvider">
+                <option value="openai">OpenAI / 兼容 API</option>
+                <option value="ollama">Ollama 本地模型</option>
+              </select>
+            </label>
             <label>API Key
               <input id="configApiKey" type="password" placeholder="sk-... 留空使用本地 fallback" />
             </label>
@@ -162,6 +170,10 @@
             <label>模型名称
               <input id="configModel" type="text" placeholder="gpt-4o、claude-3-opus、deepseek-chat" />
             </label>
+            <div class="config-row" id="configModelRefreshRow" style="display:none;">
+              <button type="button" id="configRefreshModels" class="ghost">刷新本地模型列表</button>
+              <select id="configModelSelect" style="display:none;"></select>
+            </div>
             <label class="checkbox-label">
               <input id="configVisionEnabled" type="checkbox" />
               启用视觉功能（上传图片识别任务）
@@ -258,6 +270,12 @@
       <div class="mobile-panel-body">
         <div class="config-form" id="mobileConfigForm">
           <h4 class="config-section-title">AI 配置</h4>
+          <label>AI 提供商
+            <select id="mobileConfigProvider">
+              <option value="openai">OpenAI / 兼容 API</option>
+              <option value="ollama">Ollama 本地模型</option>
+            </select>
+          </label>
           <label>API Key
             <input id="mobileConfigApiKey" type="password" placeholder="sk-..." />
           </label>
@@ -267,6 +285,10 @@
           <label>模型名称
             <input id="mobileConfigModel" type="text" placeholder="如：gpt-4o、deepseek-chat" />
           </label>
+          <div class="config-row" id="mobileConfigModelRefreshRow" style="display:none;">
+            <button type="button" id="mobileConfigRefreshModels" class="ghost">刷新本地模型列表</button>
+            <select id="mobileConfigModelSelect" style="display:none;"></select>
+          </div>
           <label class="checkbox-label">
             <input id="mobileConfigVisionEnabled" type="checkbox" />
             启用视觉功能
@@ -365,5 +387,10 @@
     </dialog>
 
     <script type="module" src="/js/app.js"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
+      }
+    </script>
   </body>
 </html>

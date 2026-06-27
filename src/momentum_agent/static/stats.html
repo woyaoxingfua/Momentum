@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#121110" />
+  <title>仪表盘 · Momentum</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    .stats-shell { display: grid; grid-template-columns: 1fr; gap: 0; max-width: 1200px; margin: 0 auto; min-height: 100vh; padding: var(--space-8); }
+    .stats-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-8); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border); }
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); margin-bottom: var(--space-6); }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); padding: var(--space-5); }
+    .stat-card h3 { font-size: 11px; color: var(--text-3); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: var(--space-3); }
+    .stat-card .value { font-size: 32px; font-weight: 600; font-family: var(--font-serif); color: var(--text); line-height: 1; }
+    .stat-card .value.accent { color: var(--accent); }
+    .stat-card .value.success { color: var(--success); }
+    .stat-card .value.danger { color: var(--danger); }
+    .stat-card p { font-size: 12px; color: var(--text-3); margin-top: var(--space-2); }
+    .charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-4); margin-bottom: var(--space-4); }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); padding: var(--space-5); min-height: 320px; }
+    .chart-card h3 { font-size: 13px; color: var(--text); margin-bottom: var(--space-4); font-family: var(--font-serif); }
+    .chart-canvas { max-height: 260px; }
+    .full-width { grid-column: 1 / -1; }
+    .insights-list { display: flex; flex-direction: column; gap: var(--space-2); }
+    .insight-item { background: var(--bg-2); border-left: 3px solid var(--accent); padding: var(--space-3) var(--space-4); font-size: 13px; color: var(--text-2); }
+    .back-link { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-3); font-size: 13px; }
+    .back-link:hover { color: var(--accent); }
+    @media (max-width: 960px) {
+      .stats-shell { padding: var(--space-5); }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 600px) {
+      .stats-grid { grid-template-columns: 1fr; }
+      .stat-card .value { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  </script>
+  <main class="stats-shell">
+    <header class="stats-header">
+      <div>
+        <div class="eyebrow">Dashboard</div>
+        <h1>仪表盘</h1>
+      </div>
+      <a class="back-link" href="/">← 返回任务</a>
+    </header>
+
+    <section class="stats-grid" id="statsGrid">
+      <div class="stat-card">
+        <h3>总完成率</h3>
+        <div class="value accent" id="completionRate">--</div>
+        <p id="completionDetail">完成 / 创建</p>
+      </div>
+      <div class="stat-card">
+        <h3>平均完成耗时</h3>
+        <div class="value" id="avgHours">--</div>
+        <p>小时 / 任务</p>
+      </div>
+      <div class="stat-card">
+        <h3>预估准确率</h3>
+        <div class="value success" id="estimationAccuracy">--</div>
+        <p>1 = 完美预估</p>
+      </div>
+      <div class="stat-card">
+        <h3>高效时段</h3>
+        <div class="value accent" id="peakHour">--</div>
+        <p>最常完成任务的时段</p>
+      </div>
+    </section>
+
+    <section class="charts-grid">
+      <div class="chart-card full-width">
+        <h3>近 14 天任务趋势</h3>
+        <canvas id="dailyChart" class="chart-canvas"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>优先级分布</h3>
+        <canvas id="priorityChart" class="chart-canvas"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>每周产出模式</h3>
+        <canvas id="weeklyChart" class="chart-canvas"></canvas>
+      </div>
+      <div class="chart-card full-width">
+        <h3>专注时长趋势</h3>
+        <canvas id="focusChart" class="chart-canvas"></canvas>
+      </div>
+      <div class="chart-card full-width">
+        <h3>完成时段分布</h3>
+        <canvas id="hourlyChart" class="chart-canvas"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-card">
+      <h3>AI 洞察摘要</h3>
+      <div class="insights-list" id="insightsList">
+        <p class="muted">加载中...</p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/js/stats.js"></script>
+</body>
+</html>

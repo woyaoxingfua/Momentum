@@ -926,16 +926,31 @@ _openai_client_cache: dict[tuple, object] = {}
 def build_openai_client(provider: ProviderConfig):
     from openai import AsyncOpenAI
 
-    key = (provider.api_key or "", provider.base_url or "")
+    base_url = provider.base_url
+    api_key = provider.api_key
+    if provider.is_ollama:
+        base_url = _normalize_ollama_base(base_url)
+        api_key = api_key or "ollama"
+
+    key = (api_key or "", base_url or "")
     cached = _openai_client_cache.get(key)
     if cached is not None:
         return cached
-    kwargs = {"api_key": provider.api_key}
-    if provider.base_url:
-        kwargs["base_url"] = provider.base_url
+    kwargs = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
     client = AsyncOpenAI(**kwargs)
     _openai_client_cache[key] = client
     return client
+
+
+def _normalize_ollama_base(base_url: str | None) -> str:
+    if not base_url:
+        return "http://localhost:11434/v1"
+    url = base_url.rstrip("/")
+    if not url.endswith("/v1"):
+        url = f"{url}/v1"
+    return url
 
 
 def build_model_settings(provider: ProviderConfig):
@@ -956,6 +971,7 @@ def provider_status(user_config: dict[str, str] | None = None) -> dict:
         return {
             "provider": "Agent provider: local fallback（未配置 API key）",
             "configured": False,
+            "provider_type": provider.provider,
         }
 
     tracing = "disabled" if provider.disable_tracing else "enabled"
@@ -963,9 +979,12 @@ def provider_status(user_config: dict[str, str] | None = None) -> dict:
     effort = f" | reasoning_effort: {provider.reasoning_effort}" if provider.reasoning_effort else ""
     features = " | features: unified agent + session memory + streaming + guardrails"
     user = f" | user: {get_current_user()}"
+    label = "Ollama" if provider.is_ollama else provider.provider_label
     return {
-        "provider": f"Agent provider: {provider.provider_label} | model: {provider.model}{thinking}{effort}{features}{user} | tracing: {tracing}",
+        "provider": f"Agent provider: {label} | model: {provider.model}{thinking}{effort}{features}{user} | tracing: {tracing}",
         "configured": True,
+        "provider_type": provider.provider,
+        "base_url": provider.base_url,
     }
 
 

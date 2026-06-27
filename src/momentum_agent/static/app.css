@@ -955,6 +955,18 @@ dialog::backdrop { background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
 
 .config-divider { height: 1px; background: var(--border); margin: var(--space-2) 0; }
 
+.config-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: var(--input-h);
+}
+
+.config-row select {
+  flex: 1;
+  min-width: 0;
+}
+
 .checkbox-label {
   display: flex; align-items: center; gap: var(--space-2);
   cursor: pointer; font-size: 12px; color: var(--text-2);

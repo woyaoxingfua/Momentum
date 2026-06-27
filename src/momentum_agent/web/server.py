@@ -85,9 +85,11 @@ class MomentumHandler(BaseHTTPRequestHandler):
     STATIC_MAP = {
         "/": ("index.html", "text/html; charset=utf-8"),
         "/login.html": ("login.html", "text/html; charset=utf-8"),
+        "/stats.html": ("stats.html", "text/html; charset=utf-8"),
         "/app.css": ("app.css", "text/css; charset=utf-8"),
         "/manifest.json": ("manifest.json", "application/manifest+json; charset=utf-8"),
         "/icon.svg": ("icon.svg", "image/svg+xml"),
+        "/sw.js": ("sw.js", "application/javascript; charset=utf-8"),
     }
 
     def _send_static_or_none(self, path: str) -> bool:
@@ -119,7 +121,10 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/advice": _handlers.handle_advice,
         "/api/review": _handlers.handle_review,
         "/api/provider": _handlers.handle_provider,
+        "/api/provider/models": _handlers.handle_provider_models,
         "/api/config": _handlers.handle_get_config,
+        "/api/stats": _handlers.handle_get_stats,
+        "/api/notifications/upcoming": _handlers.handle_get_upcoming_notifications,
     }
 
     GET_PREFIX_ROUTES = {
@@ -190,7 +195,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
                     elif "tag" in query:
                         self._handlers.handle_get_tasks_by_tag(self, query["tag"][0], user_id)
                     else:
-                        self._handlers.handle_list_tasks(self, query.get("status", ["todo"])[0], user_id)
+                        self._handlers.handle_list_tasks(
+                            self,
+                            query.get("status", ["todo"])[0],
+                            user_id,
+                            sort=query.get("sort", ["default"])[0],
+                        )
                 elif path == "/api/weather":
                     self._handlers.handle_get_weather(self, user_id, parsed)
                 elif path == "/api/location":

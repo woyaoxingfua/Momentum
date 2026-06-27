@@ -4,10 +4,19 @@ const els = {};
 let currentStatus = "todo";
 let appEls = null;
 let currentTasks = [];
+let sortMode = "default"; // default | score
 
 export function initTasks(elements, dialogElements, appElements) {
   Object.assign(els, elements, dialogElements);
   appEls = appElements;
+}
+
+export function setSortMode(mode) {
+  sortMode = mode;
+}
+
+export function getSortMode() {
+  return sortMode;
 }
 
 export function setTaskStatusFilter(status) {
@@ -233,7 +242,8 @@ export async function saveEdit(event) {
 }
 
 export async function loadTasks() {
-  const payload = await requestJson(`/api/tasks?status=${currentStatus}`);
+  const url = `/api/tasks?status=${currentStatus}&sort=${sortMode}`;
+  const payload = await requestJson(url);
   renderTasks(payload.tasks);
   return payload.tasks;
 }

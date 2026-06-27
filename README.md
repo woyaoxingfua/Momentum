@@ -123,6 +123,29 @@ momentum-agent serve
 - `sqlite:///:memory:`
 - `mysql://user:password@host:port/db`
 
+## 本地模型（Ollama）
+
+不想用云端 API？直接连本地 Ollama：
+
+```bash
+# 在界面右侧「偏好设置」里选择「Ollama 本地模型」
+# 或设置环境变量
+export MOMENTUM_PROVIDER=ollama
+export MOMENTUM_API_BASE=http://localhost:11434
+export MOMENTUM_MODEL=llama3.2
+```
+
+Ollama 需要暴露 OpenAI 兼容端点（`http://localhost:11434/v1`），Momentum 会自动补全 `/v1`。API Key 可留空或填 `ollama`。
+
+## PWA / 离线使用
+
+Momentum 支持安装为 PWA：
+
+- 桌面 Chrome / Edge：地址栏右侧点击「安装 Momentum」
+- 移动端：添加到主屏幕
+
+Service Worker 会缓存静态资源，断网仍能打开应用界面（API 请求仍需联网）。
+
 ## 技术栈
 
 | 层 | 选型 |

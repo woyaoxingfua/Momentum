@@ -1,9 +1,9 @@
 from unittest.mock import patch
 
-from momentum_agent.config import DEFAULT_MODEL, load_provider_config
+from momentum_agent.config import DEFAULT_MODEL, OLLAMA_DEFAULT_BASE, load_provider_config
 
 
-def test_provider_config_uses_local_fallback_without_key(monkeypatch) -> None:
+def _clear_env(monkeypatch) -> None:
     for name in (
         "MOMENTUM_API_KEY",
         "MOMENTUM_BASE_URL",
@@ -11,6 +11,7 @@ def test_provider_config_uses_local_fallback_without_key(monkeypatch) -> None:
         "MOMENTUM_DISABLE_TRACING",
         "MOMENTUM_THINKING",
         "MOMENTUM_REASONING_EFFORT",
+        "MOMENTUM_PROVIDER",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
         "OPENAI_MODEL",
@@ -18,6 +19,10 @@ def test_provider_config_uses_local_fallback_without_key(monkeypatch) -> None:
         "OPENAI_REASONING_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def test_provider_config_uses_local_fallback_without_key(monkeypatch) -> None:
+    _clear_env(monkeypatch)
 
     with patch("momentum_agent.config.load_dotenv"):
         config = load_provider_config()
@@ -28,6 +33,7 @@ def test_provider_config_uses_local_fallback_without_key(monkeypatch) -> None:
     assert not config.disable_tracing
     assert config.thinking is None
     assert config.reasoning_effort is None
+    assert config.provider == "openai"
 
 
 def test_momentum_provider_config_takes_precedence(monkeypatch) -> None:
@@ -43,6 +49,7 @@ def test_momentum_provider_config_takes_precedence(monkeypatch) -> None:
     assert config.api_key == "momentum-key"
     assert config.base_url == "https://custom.example/v1"
     assert config.model == "custom-model"
+    assert config.provider == "openai"
     assert config.disable_tracing
 
 
@@ -67,3 +74,46 @@ def test_deepseek_thinking_config(monkeypatch) -> None:
     assert config.model == "deepseek-v4-flash"
     assert config.thinking == "enabled"
     assert config.reasoning_effort == "max"
+
+
+def test_ollama_provider_from_user_config(monkeypatch) -> None:
+    _clear_env(monkeypatch)
+
+    with patch("momentum_agent.config.load_dotenv"):
+        config = load_provider_config({"provider": "ollama", "model": "llama3.2"})
+
+    assert config.provider == "ollama"
+    assert config.base_url == OLLAMA_DEFAULT_BASE
+    assert config.api_key == "ollama"
+    assert config.model == "llama3.2"
+    assert config.is_configured
+
+
+def test_ollama_provider_detected_by_base_url(monkeypatch) -> None:
+    _clear_env(monkeypatch)
+
+    with patch("momentum_agent.config.load_dotenv"):
+        config = load_provider_config({"api_base": "http://localhost:11434", "model": "qwen2.5"})
+
+    assert config.provider == "ollama"
+    assert config.base_url == "http://localhost:11434/v1"
+    assert config.api_key == "ollama"
+
+
+def test_ollama_provider_detected_by_api_key(monkeypatch) -> None:
+    _clear_env(monkeypatch)
+
+    with patch("momentum_agent.config.load_dotenv"):
+        config = load_provider_config({"api_key": "ollama", "model": "phi4"})
+
+    assert config.provider == "ollama"
+    assert config.base_url == OLLAMA_DEFAULT_BASE
+
+
+def test_ollama_model_prefix_stripped(monkeypatch) -> None:
+    _clear_env(monkeypatch)
+
+    with patch("momentum_agent.config.load_dotenv"):
+        config = load_provider_config({"provider": "ollama", "model": "ollama/llama3.2"})
+
+    assert config.model == "llama3.2"

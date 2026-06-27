@@ -32,10 +32,19 @@ def send_static(handler: MomentumHandler, filename: str, content_type: str) -> N
 
 # ── 任务 CRUD ──────────────────────────────────────────────────────
 
-def handle_list_tasks(handler: MomentumHandler, status: str, user_id: str) -> None:
+def handle_list_tasks(handler: MomentumHandler, status: str, user_id: str, *, sort: str = "default") -> None:
     from ..models import TaskStatus
+    from ..context import build_user_context, ranked_tasks
     chosen = TaskStatus(status) if status in TaskStatus._value2member_map_ else TaskStatus.TODO
     tasks = handler.store.list_tasks(chosen, user_id=user_id)
+    if sort == "score" and tasks:
+        # 读取用户工作配置作为排序上下文
+        prefs = handler.store.get_all_memory(user_id=user_id)
+        daily_capacity = int(prefs.get("daily_capacity_minutes", "") or 45)
+        work_start = prefs.get("working_hours_start") or "09:00"
+        work_end = prefs.get("working_hours_end") or "18:00"
+        context = build_user_context(tasks, daily_capacity_minutes=daily_capacity, working_hours_start=work_start, working_hours_end=work_end)
+        tasks = ranked_tasks(tasks, context)
     from .utils import task_to_json
     handler.send_json({"tasks": [task_to_json(t) for t in tasks]})
 
@@ -311,9 +320,34 @@ def handle_review(handler: MomentumHandler, user_id: str) -> None:
     handler.send_json({"review": local_review(handler.store, user_id=user_id)})
 
 
-def handle_provider(handler: MomentumHandler) -> None:
+def handle_provider(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import provider_status
-    handler.send_json(provider_status())
+    handler.send_json(provider_status(handler.store.get_all_memory(user_id=user_id)))
+
+
+def handle_provider_models(handler: MomentumHandler, user_id: str) -> None:
+    """List available models from the configured provider (Ollama only for now)."""
+    from ..agent_app import load_provider_config
+
+    config = load_provider_config(handler.store.get_all_memory(user_id=user_id))
+    if not config.is_ollama:
+        handler.send_json({"models": []})
+        return
+
+    base_url = (config.base_url or "").removesuffix("/v1")
+    try:
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(
+            f"{base_url}/api/tags",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+        handler.send_json({"models": models})
+    except Exception as exc:
+        handler.send_json({"error": f"无法获取 Ollama 模型列表：{exc}", "models": []})
 
 
 # ── 导出导入 ──────────────────────────────────────────────────────
@@ -690,4 +724,101 @@ def handle_get_focus_stats(handler: MomentumHandler, user_id: str) -> None:
         "total_minutes_today": sum(s.get("duration_minutes", 0) for s in sessions if s["started_at"] >= now.replace(hour=0, minute=0, second=0)),
         "total_minutes_week": total_minutes,
         "total_sessions_week": total_sessions,
+    })
+
+
+def handle_get_upcoming_notifications(handler: MomentumHandler, user_id: str) -> None:
+    """返回即将到来的任务提醒（未来 60 分钟内到期）"""
+    from datetime import datetime, timedelta, timezone
+    from ..models import TaskStatus
+    now = datetime.now(timezone.utc)
+    soon = now + timedelta(minutes=60)
+    all_tasks = handler.store.list_tasks(status=None, user_id=user_id)
+    result = []
+    for t in all_tasks:
+        if t.status not in (TaskStatus.TODO, TaskStatus.DOING) or not t.due_at:
+            continue
+        if now <= t.due_at <= soon:
+            minutes_left = int((t.due_at - now).total_seconds() / 60)
+            result.append({
+                "id": t.id,
+                "title": t.title,
+                "due_at": t.due_at.isoformat(),
+                "minutes_left": minutes_left,
+                "priority": t.priority.value,
+            })
+    result.sort(key=lambda x: x["minutes_left"])
+    handler.send_json({"notifications": result})
+
+
+def handle_get_stats(handler: MomentumHandler, user_id: str) -> None:
+    """仪表盘统计 API：返回完成趋势、优先级分布、时段热力、专注趋势"""
+    from datetime import datetime, timedelta, timezone
+    from ..insights import InsightsEngine
+    from ..models import TaskStatus
+
+    now = datetime.now(timezone.utc)
+    engine = InsightsEngine(handler.store)
+    profile = engine.build_profile(user_id)
+    tasks = handler.store.list_tasks(status=None, user_id=user_id)
+
+    # 最近 14 天每日创建/完成数
+    daily_created: dict[str, int] = {}
+    daily_done: dict[str, int] = {}
+    for i in range(13, -1, -1):
+        d = now - timedelta(days=i)
+        key = d.strftime("%m-%d")
+        daily_created[key] = 0
+        daily_done[key] = 0
+
+    for t in tasks:
+        created_key = t.created_at.strftime("%m-%d")
+        if created_key in daily_created:
+            daily_created[created_key] += 1
+        if t.status == TaskStatus.DONE:
+            updated_key = t.updated_at.strftime("%m-%d")
+            if updated_key in daily_done:
+                daily_done[updated_key] += 1
+
+    # 优先级分布
+    priority_counts = {"high": 0, "medium": 0, "low": 0}
+    for t in tasks:
+        if t.status in (TaskStatus.TODO, TaskStatus.DOING):
+            priority_counts[t.priority.value] += 1
+
+    # 完成时段分布（24小时）
+    hourly_done = {str(h): 0 for h in range(24)}
+    for t in tasks:
+        if t.status == TaskStatus.DONE:
+            hourly_done[str(t.updated_at.hour)] += 1
+
+    # 每周模式
+    weekly_pattern = engine.get_weekly_pattern(user_id)
+
+    # 专注分钟数（最近14天）
+    focus_daily: dict[str, int] = {}
+    for i in range(13, -1, -1):
+        d = now - timedelta(days=i)
+        focus_daily[d.strftime("%m-%d")] = 0
+    sessions = handler.store.get_focus_sessions(user_id=user_id)
+    for s in sessions:
+        key = s["started_at"].strftime("%m-%d")
+        if key in focus_daily:
+            focus_daily[key] += s.get("duration_minutes", 0)
+
+    handler.send_json({
+        "profile": profile.to_dict(),
+        "daily": {
+            "labels": list(daily_created.keys()),
+            "created": list(daily_created.values()),
+            "done": list(daily_done.values()),
+        },
+        "priority": priority_counts,
+        "hourly": hourly_done,
+        "weekly": weekly_pattern,
+        "focus": {
+            "labels": list(focus_daily.keys()),
+            "minutes": list(focus_daily.values()),
+        },
+        "generated_at": now.isoformat(),
     })

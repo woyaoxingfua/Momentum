@@ -1,5 +1,5 @@
 import { requestJson } from "./api.js";
-import { initTasks, saveEdit, saveSubtask, savePostpone, bindPostponeOptions, loadTasks, setTaskStatusFilter, renderTasks } from "./tasks.js";
+import { initTasks, saveEdit, saveSubtask, savePostpone, bindPostponeOptions, loadTasks, setTaskStatusFilter, renderTasks, setSortMode, getSortMode } from "./tasks.js";
 import { initChat, setAfterChat, sendChat, sendToAgent } from "./chat.js";
 import { initAdvice, loadAdvice, loadReview, loadAdviceWithAI, loadReviewWithAI } from "./advice.js";
 import { initConfig, loadConfig, saveConfig, setOnConfigSaved } from "./config.js";
@@ -29,6 +29,7 @@ const els = {
   adviseButton:   $("#adviseButton"),
   reviewButton:   $("#reviewButton"),
   refreshButton:  $("#refreshButton"),
+  sortButton:     $("#sortButton"),
   searchInput:     $("#searchInput"),
   exportButton:   $("#exportButton"),
   importFile:      $("#importFile"),
@@ -65,6 +66,7 @@ const els = {
   postponeDays:        $("#postponeDays"),
   postponeCancelButton:$("#postponeCancelButton"),
   // config
+  configProvider:          $("#configProvider"),
   configApiKey:            $("#configApiKey"),
   configApiBase:           $("#configApiBase"),
   configModel:             $("#configModel"),
@@ -267,6 +269,7 @@ function loadMobileInsights() {
 function syncMobileSettings() {
   // Sync desktop config values to mobile config form
   const pairs = [
+    ["mobileConfigProvider", "configProvider"],
     ["mobileConfigApiKey", "configApiKey"],
     ["mobileConfigApiBase", "configApiBase"],
     ["mobileConfigModel", "configModel"],
@@ -288,6 +291,46 @@ function syncMobileSettings() {
   const cb3 = document.getElementById("configHeartbeatEnabled");
   const cb4 = document.getElementById("mobileConfigHeartbeatEnabled");
   if (cb3 && cb4) cb4.checked = cb3.checked;
+  updateMobileProviderUI();
+}
+
+function updateMobileProviderUI() {
+  const provider = document.getElementById("mobileConfigProvider");
+  if (!provider) return;
+  const ollama = provider.value === "ollama";
+  const apiKey = document.getElementById("mobileConfigApiKey");
+  const base = document.getElementById("mobileConfigApiBase");
+  const model = document.getElementById("mobileConfigModel");
+  const refreshRow = document.getElementById("mobileConfigModelRefreshRow");
+
+  if (apiKey) apiKey.placeholder = ollama ? "ollama（本地无需 key）" : "sk-...";
+  if (base) base.placeholder = ollama ? "http://localhost:11434" : "https://api.openai.com/v1";
+  if (model) model.placeholder = ollama ? "如：llama3.2、qwen2.5" : "如：gpt-4o、deepseek-chat";
+  if (refreshRow) refreshRow.style.display = ollama ? "flex" : "none";
+}
+
+function bindMobileProviderUI() {
+  const provider = document.getElementById("mobileConfigProvider");
+  if (!provider) return;
+  provider.addEventListener("change", () => {
+    updateMobileProviderUI();
+    const modelSelect = document.getElementById("mobileConfigModelSelect");
+    if (modelSelect) modelSelect.style.display = "none";
+  });
+  const refreshBtn = document.getElementById("mobileConfigRefreshModels");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", async () => {
+      const { refreshOllamaModels } = await import("./config.js");
+      await refreshOllamaModels("mobileConfig");
+    });
+  }
+  const modelSelect = document.getElementById("mobileConfigModelSelect");
+  if (modelSelect) {
+    modelSelect.addEventListener("change", () => {
+      const model = document.getElementById("mobileConfigModel");
+      if (model) model.value = modelSelect.value;
+    });
+  }
 }
 
 function syncMobileChat() {
@@ -396,6 +439,7 @@ function initMobileNav() {
     mobileSaveBtn.addEventListener("click", async () => {
       // Copy mobile values back to desktop inputs
       const pairs = [
+        ["configProvider", "mobileConfigProvider"],
         ["configApiKey", "mobileConfigApiKey"],
         ["configApiBase", "mobileConfigApiBase"],
         ["configModel", "mobileConfigModel"],
@@ -431,6 +475,8 @@ function initMobileNav() {
       }, 1500);
     });
   }
+
+  bindMobileProviderUI();
 }
 
 // ── Status tabs ──────────────────────────────────────────────
@@ -472,6 +518,7 @@ function init() {
 
   // Config
   initConfig({
+    configProvider: els.configProvider,
     configApiKey: els.configApiKey, configApiBase: els.configApiBase,
     configModel: els.configModel, configVisionEnabled: els.configVisionEnabled,
     configCapacity: els.configCapacity, configWorkStart: els.configWorkStart,
@@ -486,6 +533,18 @@ function init() {
 
   // Status tabs
   initStatusTabs();
+
+  // Sort toggle
+  if (els.sortButton) {
+    els.sortButton.addEventListener("click", () => {
+      const current = getSortMode();
+      const next = current === "default" ? "score" : "default";
+      setSortMode(next);
+      els.sortButton.textContent = next === "score" ? "默认排序" : "智能排序";
+      els.sortButton.title = next === "score" ? "恢复默认时间排序" : "按 AI 推荐优先级排序";
+      loadTasks();
+    });
+  }
 
   // ── Event bindings ──
   els.addTaskButton.addEventListener("click", addTask);
