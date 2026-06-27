@@ -40,18 +40,13 @@ class MomentumHandler(BaseHTTPRequestHandler):
         from ..storage import create_task_store
         return create_task_store(self.database_url)
 
-    def handle_one_request(self) -> None:
-        try:
-            super().handle_one_request()
-        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-            pass
-
     def send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
         self._last_status = status.value
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -120,20 +115,20 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/export": _handlers.handle_export,
         "/api/advice": _handlers.handle_advice,
         "/api/review": _handlers.handle_review,
-        "/api/provider": _handlers.handle_provider,
         "/api/provider/models": _handlers.handle_provider_models,
         "/api/config": _handlers.handle_get_config,
         "/api/stats": _handlers.handle_get_stats,
         "/api/notifications/upcoming": _handlers.handle_get_upcoming_notifications,
+        "/api/focus/stats": _handlers.handle_get_focus_stats,
     }
 
     GET_PREFIX_ROUTES = {
-        "/subtasks": _handlers.handle_get_subtasks,
-        "/with-subtasks": _handlers.handle_get_task_with_subtasks,
-        "/dependencies": _handlers.handle_get_dependencies,
-        "/dependents": _handlers.handle_get_dependents,
-        "/relations": _handlers.handle_get_task_relations,
-        "/is-blocked": _handlers.handle_is_task_blocked,
+        "subtasks": _handlers.handle_get_subtasks,
+        "with-subtasks": _handlers.handle_get_task_with_subtasks,
+        "dependencies": _handlers.handle_get_dependencies,
+        "dependents": _handlers.handle_get_dependents,
+        "relations": _handlers.handle_get_task_relations,
+        "is-blocked": _handlers.handle_is_task_blocked,
     }
 
     POST_PUBLIC_ROUTES = {
@@ -156,28 +151,26 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/config": _handlers.handle_set_config,
         "/api/import": _handlers.handle_import,
         "/api/focus/start": _handlers.handle_start_focus,
-        "/api/focus/stats": _handlers.handle_get_focus_stats,
     }
 
     POST_PREFIX_ROUTES = {
-        "/done": _handlers.handle_done_task,
-        "/postpone": _handlers.handle_postpone_task,
-        "/drop": _handlers.handle_drop_task,
-        "/start": _handlers.handle_start_task,
-        "/reopen": _handlers.handle_reopen_task,
-        "/subtasks": _handlers.handle_create_subtask,
-        "/bulk-subtasks": _handlers.handle_bulk_create_subtasks,
-        "/dependencies": _handlers.handle_add_dependency,
-        "/relations": _handlers.handle_add_task_relation,
+        "done": _handlers.handle_done_task,
+        "postpone": _handlers.handle_postpone_task,
+        "drop": _handlers.handle_drop_task,
+        "start": _handlers.handle_start_task,
+        "reopen": _handlers.handle_reopen_task,
+        "subtasks": _handlers.handle_create_subtask,
+        "bulk-subtasks": _handlers.handle_bulk_create_subtasks,
+        "dependencies": _handlers.handle_add_dependency,
+        "relations": _handlers.handle_add_task_relation,
     }
 
     def do_GET(self):
         t0 = time.time()
         parsed = urlparse(self.path)
+        path = parsed.path
         with request_context():
             try:
-                path = parsed.path
-
                 # 静态文件 — 无需认证
                 if self._send_static_or_none(path):
                     return
@@ -207,6 +200,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
                     self._handlers.handle_get_location(self, user_id, parsed)
                 elif path == "/api/me":
                     self.send_json({"user_id": user_id})
+                elif path == "/api/provider":
+                    self._handlers.handle_provider(self, user_id)
                 elif path in self.GET_EXACT_ROUTES:
                     self.GET_EXACT_ROUTES[path](self, user_id)
                 elif path.startswith("/api/tasks/"):
@@ -217,6 +212,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
                         self.send_error(HTTPStatus.NOT_FOUND)
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
+            except Exception as exc:
+                log.exception("GET %s failed", parsed.path)
+                try:
+                    self.send_json({"error": f"服务器错误：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                except Exception:
+                    pass
             finally:
                 log_api_request("GET", parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
 
@@ -249,6 +250,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
                         self.send_error(HTTPStatus.NOT_FOUND)
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
+            except Exception as exc:
+                log.exception("POST %s failed", parsed.path)
+                try:
+                    self.send_json({"error": f"服务器错误：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                except Exception:
+                    pass
             finally:
                 log_api_request("POST", parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
 
@@ -267,11 +274,17 @@ class MomentumHandler(BaseHTTPRequestHandler):
                 # PUT /api/tasks/<id> 编辑任务；需排除 POST 专用的 action 后缀
                 if (
                     path.startswith("/api/tasks/")
-                    and path.rsplit("/", 1)[-1] not in {"done", "postpone", "drop", "start", "reopen", "subtasks", "bulk-subtasks", "dependencies", "relations"}
+                    and path.rsplit("/", 1)[-1] not in set(self.POST_PREFIX_ROUTES.keys())
                 ):
                     handlers.handle_edit_task(self, path, user_id)
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
+            except Exception as exc:
+                log.exception("PUT %s failed", parsed.path)
+                try:
+                    self.send_json({"error": f"服务器错误：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                except Exception:
+                    pass
             finally:
                 log_api_request("PUT", parsed.path, self._last_status or 200, (time.time() - t0) * 1000)
 

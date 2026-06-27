@@ -321,8 +321,13 @@ def handle_review(handler: MomentumHandler, user_id: str) -> None:
 
 
 def handle_provider(handler: MomentumHandler, user_id: str) -> None:
-    from ..agent_app import provider_status
-    handler.send_json(provider_status(handler.store.get_all_memory(user_id=user_id)))
+    try:
+        from ..agent_app import provider_status
+        handler.send_json(provider_status(handler.store.get_all_memory(user_id=user_id)))
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        handler.send_json({"error": str(exc), "provider": "unknown", "configured": False})
 
 
 def handle_provider_models(handler: MomentumHandler, user_id: str) -> None:
