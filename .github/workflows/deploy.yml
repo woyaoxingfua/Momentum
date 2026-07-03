@@ -55,12 +55,11 @@ jobs:
           VM_SERVICE_NAME: ${{ secrets.VM_SERVICE_NAME }}
           VM_PROJECT_DIR: ${{ secrets.VM_PROJECT_DIR }}
         run: |
-          ssh -o StrictHostKeyChecking=yes "$VM_USER@$VM_HOST" <<'REMOTE_SCRIPT'
-            set -e
-            cd "$VM_PROJECT_DIR"
-            git pull origin master
-            source .venv/bin/activate || python3 -m venv .venv && source .venv/bin/activate
-            pip install -e ".[dev]"
-            sudo systemctl restart "$VM_SERVICE_NAME"
-            echo "Deployment completed and service restarted."
-          REMOTE_SCRIPT
+          ssh -o StrictHostKeyChecking=yes "$VM_USER@$VM_HOST" \
+            "set -e
+             cd '$VM_PROJECT_DIR'
+             git pull origin master
+             source .venv/bin/activate || python3 -m venv .venv && source .venv/bin/activate
+             pip install -e '.[dev]'
+             sudo systemctl restart '$VM_SERVICE_NAME'
+             echo 'Deployment completed and service restarted.'"
