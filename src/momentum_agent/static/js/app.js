@@ -6,6 +6,47 @@ import { initConfig, loadConfig, saveConfig, setOnConfigSaved } from "./config.j
 import { initHeartbeat, loadHeartbeatConfig, startHeartbeatChecks } from "./heartbeat.js";
 import { initNotifications } from "./notifications.js";
 
+// ── Theme ─────────────────────────────────────────────────────
+function initTheme() {
+  const saved = localStorage.getItem("momentum_theme");
+  const theme = saved || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  applyTheme(theme);
+}
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("momentum_theme", theme);
+  const moon = document.getElementById("themeIconMoon");
+  const sun = document.getElementById("themeIconSun");
+  if (moon && sun) {
+    moon.style.display = theme === "dark" ? "none" : "block";
+    sun.style.display = theme === "dark" ? "block" : "none";
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "light" ? "#f5f3ef" : "#121110");
+}
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  applyTheme(current === "dark" ? "light" : "dark");
+}
+initTheme();
+
+// ── Background image ──────────────────────────────────────────
+function initBackground() {
+  const url = localStorage.getItem("momentum_bg_url");
+  const opacity = localStorage.getItem("momentum_bg_opacity") || "15";
+  applyBackground(url, opacity);
+}
+function applyBackground(url, opacity) {
+  if (url) {
+    document.documentElement.style.setProperty("--bg-image", `url("${url}")`);
+    document.documentElement.style.setProperty("--bg-opacity", String(parseInt(opacity) / 100));
+  } else {
+    document.documentElement.style.setProperty("--bg-image", "none");
+    document.documentElement.style.setProperty("--bg-opacity", "0");
+  }
+}
+initBackground();
+
 let onAfterChat = null;
 
 // ── Auth guard ────────────────────────────────────────────────
@@ -601,6 +642,25 @@ function init() {
   if (user) $("#currentUser").textContent = user;
   $("#logoutButton")?.addEventListener("click", () => {
     import("./api.js").then(({ logout }) => logout());
+  });
+  const themeToggle = document.getElementById("themeToggle");
+  if (themeToggle) themeToggle.addEventListener("click", toggleTheme);
+  const bgApply = document.getElementById("mobileConfigBgApply");
+  const bgClear = document.getElementById("mobileConfigBgClear");
+  const bgUrl = document.getElementById("mobileConfigBgUrl");
+  const bgOpacity = document.getElementById("mobileConfigBgOpacity");
+  if (bgApply) bgApply.addEventListener("click", () => {
+    const url = bgUrl ? bgUrl.value.trim() : "";
+    const opacity = bgOpacity ? bgOpacity.value : "15";
+    localStorage.setItem("momentum_bg_url", url);
+    localStorage.setItem("momentum_bg_opacity", opacity);
+    applyBackground(url, opacity);
+  });
+  if (bgClear) bgClear.addEventListener("click", () => {
+    localStorage.removeItem("momentum_bg_url");
+    localStorage.removeItem("momentum_bg_opacity");
+    applyBackground("", "0");
+    if (bgUrl) bgUrl.value = "";
   });
 }
 
