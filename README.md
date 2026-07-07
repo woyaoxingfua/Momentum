@@ -212,7 +212,7 @@ pytest tests/test_mysql_store.py -v
 
 ## 在线体验
 
-https://myfirst.cc 
+https://myfirst.cc.cd 
 
 ## License
 
