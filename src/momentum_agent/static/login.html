@@ -47,7 +47,7 @@
     function qs(sel) { return document.querySelector(sel); }
 
     if (localStorage.getItem("momentum_token")) {
-      window.location.href = "/";
+      window.location.href = "/app";
       throw new Error("redirect");
     }
 
@@ -113,7 +113,7 @@
         if (mode === "login") {
           localStorage.setItem("momentum_token", data.token);
           localStorage.setItem("momentum_user", data.user_id);
-          window.location.href = "/";
+          window.location.href = "/app";
         } else {
           switchMode();
           qs("#password").value = "";

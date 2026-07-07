@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#121110" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Momentum — 你的 AI 任务管理助手。智能任务管理、AI Agent 对话、专注统计、PWA 支持。" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>Momentum — 你的 AI 任务管理助手</title>
+  <link rel="stylesheet" href="/app.css" />
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <style>
+    /* Landing 页专属样式（仅此处使用） */
+    .landing-nav {
+      position: sticky; top: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--space-4) var(--space-6);
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .landing-nav .brand {
+      display: flex; align-items: center; gap: var(--space-3);
+      font-weight: 600; font-size: 16px;
+    }
+    .landing-nav .brand img { width: 28px; height: 28px; }
+    .landing-nav .nav-actions { display: flex; gap: var(--space-2); align-items: center; }
+    .landing-nav .nav-actions a {
+      display: inline-flex; align-items: center;
+      height: var(--btn-h); padding: 0 var(--space-4);
+      border: 1px solid var(--border-2);
+      color: var(--text); text-decoration: none;
+      font-size: 13px; border-radius: var(--radius);
+      transition: all var(--transition);
+    }
+    .landing-nav .nav-actions a:hover { background: var(--surface-2); }
+    .landing-nav .nav-actions a.primary {
+      background: var(--accent); color: #1a1300; border-color: var(--accent); font-weight: 600;
+    }
+    .landing-nav .nav-actions a.primary:hover { background: var(--accent-2); }
+
+    .landing-hero {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: var(--space-8) var(--space-6) var(--space-8);
+      text-align: center;
+    }
+    .landing-hero .badge {
+      display: inline-flex; align-items: center; gap: var(--space-2);
+      padding: 6px 14px; border-radius: var(--radius-pill);
+      background: var(--accent-bg); color: var(--accent);
+      font-size: 12px; font-weight: 600;
+      margin-bottom: var(--space-5);
+    }
+    .landing-hero h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(40px, 8vw, 64px);
+      line-height: 1.1; letter-spacing: -0.02em;
+      margin-bottom: var(--space-4);
+    }
+    .landing-hero h1 .accent { color: var(--accent); }
+    .landing-hero .tagline {
+      font-size: clamp(16px, 2.4vw, 20px);
+      color: var(--text-2);
+      max-width: 560px; margin: 0 auto var(--space-6);
+      line-height: 1.6;
+    }
+    .landing-hero .cta-group {
+      display: flex; gap: var(--space-3); justify-content: center; flex-wrap: wrap;
+    }
+    .landing-hero .cta {
+      display: inline-flex; align-items: center; gap: var(--space-2);
+      height: 44px; padding: 0 var(--space-6);
+      border-radius: var(--radius);
+      font-size: 15px; font-weight: 600; text-decoration: none;
+      transition: all var(--transition);
+      border: 1px solid transparent;
+    }
+    .landing-hero .cta.primary {
+      background: var(--accent); color: #1a1300;
+      box-shadow: var(--shadow);
+    }
+    .landing-hero .cta.primary:hover { background: var(--accent-2); transform: translateY(-1px); }
+    .landing-hero .cta.ghost {
+      background: transparent; color: var(--text);
+      border-color: var(--border-2);
+    }
+    .landing-hero .cta.ghost:hover { background: var(--surface-2); }
+
+    .landing-section {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: var(--space-8) var(--space-6);
+    }
+    .section-heading {
+      text-align: center; margin-bottom: var(--space-8);
+    }
+    .section-heading .eyebrow {
+      color: var(--accent); font-size: 12px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-bottom: var(--space-2);
+    }
+    .section-heading h2 {
+      font-family: var(--font-serif);
+      font-size: clamp(28px, 4vw, 36px);
+      letter-spacing: -0.01em;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: var(--space-5);
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-6);
+      transition: all var(--transition);
+    }
+    .feature-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow);
+    }
+    .feature-card .icon {
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: var(--radius);
+      background: var(--accent-bg); color: var(--accent);
+      margin-bottom: var(--space-4);
+    }
+    .feature-card .icon svg { width: 22px; height: 22px; }
+    .feature-card h3 {
+      font-size: 17px; margin-bottom: var(--space-2);
+    }
+    .feature-card p {
+      color: var(--text-2); font-size: 13px; line-height: 1.6;
+    }
+
+    .landing-cta {
+      max-width: 720px;
+      margin: var(--space-8) auto;
+      padding: var(--space-8) var(--space-6);
+      text-align: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+    }
+    .landing-cta h2 {
+      font-family: var(--font-serif);
+      font-size: clamp(24px, 4vw, 32px);
+      margin-bottom: var(--space-3);
+    }
+    .landing-cta p {
+      color: var(--text-2); margin-bottom: var(--space-6);
+    }
+
+    .landing-footer {
+      text-align: center; padding: var(--space-6);
+      color: var(--text-3); font-size: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (max-width: 640px) {
+      .landing-nav { padding: var(--space-3) var(--space-4); }
+      .landing-nav .nav-actions a { padding: 0 var(--space-3); font-size: 12px; }
+      .landing-hero { padding: var(--space-6) var(--space-4); }
+    }
+  </style>
+</head>
+<body>
+  <!-- 顶部导航 -->
+  <nav class="landing-nav">
+    <div class="brand">
+      <img src="/icon.svg" alt="Momentum" />
+      <span>Momentum</span>
+    </div>
+    <div class="nav-actions">
+      <a href="/login.html">登录</a>
+      <a href="/login.html" class="primary">注册</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="landing-hero">
+    <span class="badge">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      AI 驱动的任务管理
+    </span>
+    <h1><span class="accent">Momentum</span></h1>
+    <p class="tagline">你的 AI 任务管理助手。保持势头，把想做的事一件件推进。</p>
+    <div class="cta-group">
+      <a href="/login.html" class="cta primary" id="ctaStart">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        开始使用
+      </a>
+      <a href="#features" class="cta ghost">了解功能</a>
+    </div>
+  </header>
+
+  <!-- 功能介绍 -->
+  <section class="landing-section" id="features">
+    <div class="section-heading">
+      <p class="eyebrow">核心功能</p>
+      <h2>为高效执行而设计</h2>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </div>
+        <h3>智能任务管理</h3>
+        <p>创建、拆分、排序任务，支持子任务和依赖关系。AI 自动排序帮你聚焦最重要的事。</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        </div>
+        <h3>AI Agent 对话</h3>
+        <p>跟 AI 助手对话，让它帮你拆计划、复盘进展、给出下一步建议。像有个私人助理。</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        </div>
+        <h3>专注统计</h3>
+        <p>仪表盘追踪任务进度和专注时间。数据可视化让你看清自己的工作节奏。</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+        </div>
+        <h3>PWA 支持</h3>
+        <p>添加到主屏幕，像原生 App 一样使用。离线访问、推送通知、全屏体验一应俱全。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 底部 CTA -->
+  <section class="landing-cta">
+    <h2>准备好开始了吗？</h2>
+    <p>几秒钟注册，立即开始管理你的任务和专注时间。</p>
+    <a href="/login.html" class="cta primary" id="ctaStartBottom" style="display:inline-flex;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      立即开始
+    </a>
+  </section>
+
+  <footer class="landing-footer">
+    Momentum · 让每一天都比昨天更有效率
+  </footer>
+
+  <script>
+    // 主题初始化（与 login.html 一致）
+    (function(){
+      var saved = localStorage.getItem("momentum_theme");
+      var theme = saved || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.setAttribute("data-theme", theme);
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", theme === "light" ? "#f5f3ef" : "#121110");
+    })();
+
+    // 已登录用户直接跳转到应用
+    (function(){
+      if (localStorage.getItem("momentum_token")) {
+        var startBtn = document.getElementById("ctaStart");
+        var startBtnBottom = document.getElementById("ctaStartBottom");
+        if (startBtn) startBtn.href = "/app";
+        if (startBtnBottom) startBtnBottom.href = "/app";
+      }
+    })();
+
+    // 平滑滚动
+    document.querySelectorAll('a[href^="#"]').forEach(function(anchor){
+      anchor.addEventListener("click", function(e){
+        var target = document.querySelector(this.getAttribute("href"));
+        if (target) {
+          e.preventDefault();
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    });
+
+    // Service Worker
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>

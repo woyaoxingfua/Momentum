@@ -210,6 +210,25 @@
       </aside>
     </main>
 
+    <!-- Onboarding Guide -->
+    <div class="onboarding-overlay" id="onboardingOverlay" style="display:none;">
+      <div class="onboarding-card">
+        <div class="onboarding-progress">
+          <span class="onboarding-dot active" data-step="0"></span>
+          <span class="onboarding-dot" data-step="1"></span>
+          <span class="onboarding-dot" data-step="2"></span>
+          <span class="onboarding-dot" data-step="3"></span>
+        </div>
+        <div class="onboarding-content" id="onboardingContent">
+          <!-- 内容由 JS 动态填充 -->
+        </div>
+        <div class="onboarding-actions">
+          <button class="ghost" id="onboardingSkip">跳过</button>
+          <button class="primary" id="onboardingNext">下一步</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Mobile Bottom Nav -->
     <nav class="mobile-nav" aria-label="移动端导航">
       <div class="mobile-nav-items">

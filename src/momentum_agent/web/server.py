@@ -78,7 +78,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
     # ── 静态文件路由表 ─────────────────────────────────────────────
     STATIC_MAP = {
-        "/": ("index.html", "text/html; charset=utf-8"),
+        "/": ("landing.html", "text/html; charset=utf-8"),
+        "/app": ("index.html", "text/html; charset=utf-8"),
         "/login.html": ("login.html", "text/html; charset=utf-8"),
         "/stats.html": ("stats.html", "text/html; charset=utf-8"),
         "/app.css": ("app.css", "text/css; charset=utf-8"),

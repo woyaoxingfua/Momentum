@@ -2,6 +2,8 @@ const CACHE_NAME = "momentum-v1";
 
 const PRECACHE_ASSETS = [
   "/",
+  "/landing.html",
+  "/app",
   "/login.html",
   "/stats.html",
   "/app.css",

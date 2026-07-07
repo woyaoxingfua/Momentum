@@ -534,6 +534,67 @@ function initStatusTabs() {
   });
 }
 
+// ── Onboarding ────────────────────────────────────────────────
+const ONBOARDING_STEPS = [
+  {
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+    title: '欢迎使用 Momentum',
+    desc: '你的 AI 任务管理助手。在这里，你可以轻松管理待办、让 AI 帮你拆分计划、追踪专注时间。',
+  },
+  {
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+    title: '智能任务管理',
+    desc: '在输入框写下你想做的事，按 Ctrl+Enter 快速添加。支持图片识别、子任务拆分、任务依赖和智能排序。',
+  },
+  {
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
+    title: 'AI Agent 助手',
+    desc: '点击"拆成计划"让 AI 自动拆分任务，点击"今日建议"获取下一步建议，点击"复盘"总结一天进展。移动端点击底部 Agent 标签对话。',
+  },
+  {
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+    title: '开始使用',
+    desc: '在设置中配置你的 AI 提供商（OpenAI / DeepSeek / Ollama）。添加到主屏幕即可像原生 App 一样使用。准备好开始了吗？',
+  },
+];
+
+let _onboardingStep = 0;
+
+function showOnboarding() {
+  const overlay = document.getElementById("onboardingOverlay");
+  if (!overlay) return;
+  overlay.style.display = "flex";
+  _onboardingStep = 0;
+  renderOnboardingStep();
+}
+
+function renderOnboardingStep() {
+  const content = document.getElementById("onboardingContent");
+  if (!content) return;
+  const step = ONBOARDING_STEPS[_onboardingStep];
+  content.innerHTML = `${step.icon}<h3>${step.title}</h3><p>${step.desc}</p>`;
+  document.querySelectorAll(".onboarding-dot").forEach((d, i) => {
+    d.classList.toggle("active", i === _onboardingStep);
+  });
+  const nextBtn = document.getElementById("onboardingNext");
+  if (nextBtn) nextBtn.textContent = _onboardingStep === ONBOARDING_STEPS.length - 1 ? "完成" : "下一步";
+}
+
+function nextOnboarding() {
+  if (_onboardingStep < ONBOARDING_STEPS.length - 1) {
+    _onboardingStep++;
+    renderOnboardingStep();
+  } else {
+    closeOnboarding();
+  }
+}
+
+function closeOnboarding() {
+  const overlay = document.getElementById("onboardingOverlay");
+  if (overlay) overlay.style.display = "none";
+  localStorage.setItem("momentum_onboarded", "1");
+}
+
 // ── Init ──────────────────────────────────────────────────────
 function init() {
   // Tasks
@@ -662,6 +723,12 @@ function init() {
     applyBackground("", "0");
     if (bgUrl) bgUrl.value = "";
   });
+
+  // Onboarding buttons
+  const onboardingNext = document.getElementById("onboardingNext");
+  const onboardingSkip = document.getElementById("onboardingSkip");
+  if (onboardingNext) onboardingNext.addEventListener("click", nextOnboarding);
+  if (onboardingSkip) onboardingSkip.addEventListener("click", closeOnboarding);
 }
 
 // Initial load — only when authenticated
@@ -669,4 +736,8 @@ if (_hasToken) {
   init();
   refreshAll().catch(err => { els.adviceText.textContent = err.message; });
   loadConfig();
+  // 首次使用显示引导
+  if (!localStorage.getItem("momentum_onboarded")) {
+    showOnboarding();
+  }
 }
