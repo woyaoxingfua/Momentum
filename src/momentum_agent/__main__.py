@@ -46,7 +46,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="momentum-agent")
     parser.add_argument("--db", "--database-url", dest="database_url",
                         default=os.environ.get("MOMENTUM_DATABASE_URL", ".momentum/tasks.db"),
-                        help="Database URL (default: $MOMENTUM_DATABASE_URL or .momentum/tasks.db).")
+                        help="Database URL. Supported formats:\n"
+                             "  sqlite:///path/to/db.db  (本地 SQLite，默认)\n"
+                             "  mysql://user:pass@host:port/db  (MySQL)\n"
+                             "  azure://user:pass@host:port/db  (Azure MySQL，自动启用SSL)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging.")
     parser.add_argument("--log-file", type=Path, default=None, help="Override log file path (default: logs/momentum-YYYY-MM-DD.log).")
     parser.add_argument("--log-dir", type=Path, default=None, help="Override log directory (default: logs/).")

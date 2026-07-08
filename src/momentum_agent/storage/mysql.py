@@ -90,9 +90,18 @@ CREATE TABLE IF NOT EXISTS task_events (
 
 
 def _parse_mysql_url(url: str) -> dict[str, Any]:
-    """把 mysql:// URL 解析成 pymysql.connect 参数。"""
+    """把 mysql:// URL 解析成 pymysql.connect 参数。
+
+    支持查询参数：
+      - ssl=true 启用 SSL 连接（Azure MySQL 需要）
+      - ssl_ca=path 自定义 CA 证书路径
+    """
     parsed = urlparse(url)
-    return {
+    from urllib.parse import parse_qs
+    query = parse_qs(parsed.query)
+    ssl_enabled = query.get("ssl", ["false"])[0].lower() in ("true", "1", "yes", "on")
+
+    result = {
         "host": parsed.hostname or "localhost",
         "port": parsed.port or 3306,
         "user": parsed.username or "root",
@@ -102,6 +111,17 @@ def _parse_mysql_url(url: str) -> dict[str, Any]:
         "cursorclass": "pymysql.cursors.DictCursor",
         "autocommit": False,
     }
+
+    if ssl_enabled:
+        ssl_ca = query.get("ssl_ca", [None])[0]
+        if ssl_ca:
+            import ssl
+            ssl_ctx = ssl.create_default_context(cafile=ssl_ca)
+            result["ssl"] = ssl_ctx
+        else:
+            result["ssl"] = True
+
+    return result
 
 
 class MySQLTaskStore:

@@ -12,9 +12,13 @@ def create_task_store(database_url: str | None = None) -> SQLiteTaskStore | MySQ
     """根据数据库 URL 创建存储后端。
 
     支持的 URL 格式：
-      - sqlite:///absolute/path/to/db.db
-      - sqlite:///:memory:
-      - mysql://user:password@host:port/db
+      - sqlite:///absolute/path/to/db.db  (本地 SQLite 数据库，默认)
+      - sqlite:///:memory:                  (内存数据库，临时使用)
+      - mysql://user:password@host:port/db  (MySQL 数据库)
+      - azure://user:password@host:port/db  (Azure MySQL 数据库，自动启用 SSL)
+
+    Azure MySQL URL 示例：
+      azure://admin@servername.mysql.database.azure.com:3306/momentum
 
     未提供 URL 时默认使用环境变量 MOMENTUM_DATABASE_URL，
     否则回退到项目目录下的 .momentum/tasks.db。
@@ -41,5 +45,9 @@ def create_task_store(database_url: str | None = None) -> SQLiteTaskStore | MySQ
 
     if scheme == "mysql":
         return MySQLTaskStore(database_url)
+
+    if scheme == "azure":
+        azure_url = f"mysql://{database_url[len('azure://'):]}?ssl=true"
+        return MySQLTaskStore(azure_url)
 
     raise ValueError(f"不支持的数据库 URL: {database_url}")
