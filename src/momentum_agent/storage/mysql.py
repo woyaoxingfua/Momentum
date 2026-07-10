@@ -113,13 +113,15 @@ def _parse_mysql_url(url: str) -> dict[str, Any]:
     }
 
     if ssl_enabled:
+        import ssl as _ssl
         ssl_ca = query.get("ssl_ca", [None])[0]
         if ssl_ca:
-            import ssl
-            ssl_ctx = ssl.create_default_context(cafile=ssl_ca)
-            result["ssl"] = ssl_ctx
+            ssl_ctx = _ssl.create_default_context(cafile=ssl_ca)
         else:
-            result["ssl"] = True
+            ssl_ctx = _ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = _ssl.CERT_NONE
+        result["ssl"] = ssl_ctx
 
     return result
 
