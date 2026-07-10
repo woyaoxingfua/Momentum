@@ -95,17 +95,19 @@ def _parse_mysql_url(url: str) -> dict[str, Any]:
     支持查询参数：
       - ssl=true 启用 SSL 连接（Azure MySQL 需要）
       - ssl_ca=path 自定义 CA 证书路径
+
+    注意：密码中的特殊字符（如 @ 等）需要 URL 编码，例如 @ -> %40。
     """
     parsed = urlparse(url)
-    from urllib.parse import parse_qs
+    from urllib.parse import parse_qs, unquote
     query = parse_qs(parsed.query)
     ssl_enabled = query.get("ssl", ["false"])[0].lower() in ("true", "1", "yes", "on")
 
     result = {
         "host": parsed.hostname or "localhost",
         "port": parsed.port or 3306,
-        "user": parsed.username or "root",
-        "password": parsed.password or "",
+        "user": unquote(parsed.username) if parsed.username else "root",
+        "password": unquote(parsed.password) if parsed.password else "",
         "database": parsed.path.lstrip("/") or None,
         "charset": "utf8mb4",
         "cursorclass": "pymysql.cursors.DictCursor",
