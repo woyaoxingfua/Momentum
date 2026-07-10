@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at TEXT NOT NULL,
     tags TEXT,
     INDEX idx_tasks_user_status (user_id, status),
-    INDEX idx_tasks_user_due (user_id, due_at),
+    INDEX idx_tasks_user_due (user_id, due_at(64)),
     INDEX idx_tasks_parent (parent_task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
