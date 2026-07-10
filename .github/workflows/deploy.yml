@@ -56,21 +56,17 @@ jobs:
           VM_PROJECT_DIR: ${{ secrets.VM_PROJECT_DIR }}
         run: |
           ssh -o StrictHostKeyChecking=yes "$VM_USER@$VM_HOST" \
-            "set -e
-             cd '$VM_PROJECT_DIR'
-             echo 'Step 1: Pulling latest code...'
-             git pull origin master
-             echo 'Step 2: Activating virtual environment...'
-             source .venv/bin/activate || python3 -m venv .venv && source .venv/bin/activate
-             echo 'Step 3: Installing dependencies...'
-             pip install -e '.[dev]' --quiet
-             echo 'Step 4: Killing any existing processes...'
-             sudo pkill -f 'momentum-agent' || true
-             sleep 2
-             echo 'Step 5: Restarting systemd service...'
-             sudo systemctl stop '$VM_SERVICE_NAME' || true
-             sudo systemctl start '$VM_SERVICE_NAME'
-             sleep 3
-             echo 'Step 6: Checking service status...'
-             sudo systemctl status '$VM_SERVICE_NAME'
+            "cd '$VM_PROJECT_DIR' && \
+             echo 'Step 1: Pulling latest code...' && \
+             git pull origin master && \
+             echo 'Step 2: Activating virtual environment...' && \
+             source .venv/bin/activate && \
+             echo 'Step 3: Installing dependencies...' && \
+             pip install -e '.[dev]' --quiet && \
+             echo 'Step 4: Restarting systemd service...' && \
+             sudo systemctl daemon-reload && \
+             sudo systemctl restart '$VM_SERVICE_NAME' && \
+             sleep 3 && \
+             echo 'Step 5: Checking service status...' && \
+             sudo systemctl is-active '$VM_SERVICE_NAME' && \
              echo 'Deployment completed successfully.'"
