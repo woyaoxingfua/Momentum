@@ -45,17 +45,17 @@ CREATE TABLE IF NOT EXISTS tasks (
     title TEXT NOT NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'todo',
     priority VARCHAR(16) NOT NULL DEFAULT 'medium',
-    due_at TEXT,
+    due_at VARCHAR(64),
     estimated_minutes INT,
     notes TEXT,
     parent_task_id INT REFERENCES tasks(id) ON DELETE CASCADE,
     recurrence TEXT,
     user_id VARCHAR(64) NOT NULL DEFAULT 'default' REFERENCES users(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
     tags TEXT,
     INDEX idx_tasks_user_status (user_id, status),
-    INDEX idx_tasks_user_due (user_id, due_at(64)),
+    INDEX idx_tasks_user_due (user_id, due_at),
     INDEX idx_tasks_parent (parent_task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
