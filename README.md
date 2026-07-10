@@ -2,6 +2,8 @@
 
 > 不是「又一个待办清单」，而是一个会陪你把事做完的 AI 任务系统。
 
+[English](./README.en.md)
+
 Momentum 是一个 **本地优先（Local-first）** 的任务管理工具：
 - 用自然语言快速记任务
 - 用 AI 自动拆解复杂目标
@@ -187,6 +189,12 @@ pytest tests/test_mysql_store.py -v
 ## 🌐 在线体验
 
 https://myfirst.cc.cd
+
+---
+
+## 🖼️ 截图
+
+当前仓库暂未提供最新界面截图。
 
 ---
 
