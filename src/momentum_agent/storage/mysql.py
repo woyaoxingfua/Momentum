@@ -72,10 +72,10 @@ CREATE TABLE IF NOT EXISTS task_relations (
 
 CREATE TABLE IF NOT EXISTS user_memory (
     user_id VARCHAR(64) NOT NULL DEFAULT 'local',
-    key VARCHAR(128) NOT NULL,
+    `key` VARCHAR(128) NOT NULL,
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (user_id, key)
+    PRIMARY KEY (user_id, `key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS task_events (
@@ -998,7 +998,7 @@ class MySQLTaskStore:
             self._execute(
                 conn,
                 """
-                INSERT INTO user_memory (user_id, key, value, updated_at)
+                INSERT INTO user_memory (user_id, `key`, value, updated_at)
                 VALUES (%s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     value = VALUES(value),
@@ -1011,7 +1011,7 @@ class MySQLTaskStore:
         with self._connect() as conn:
             cur = self._execute(
                 conn,
-                "SELECT value FROM user_memory WHERE user_id = %s AND key = %s",
+                "SELECT value FROM user_memory WHERE user_id = %s AND `key` = %s",
                 (user_id, key),
             )
             row = cur.fetchone()
@@ -1021,7 +1021,7 @@ class MySQLTaskStore:
         with self._connect() as conn:
             cur = self._execute(
                 conn,
-                "SELECT key, value FROM user_memory WHERE user_id = %s",
+                "SELECT `key`, value FROM user_memory WHERE user_id = %s",
                 (user_id,),
             )
             rows = cur.fetchall()
