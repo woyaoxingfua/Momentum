@@ -12,6 +12,9 @@ from ..logger import get_logger, init_from_env, request_context, log_api_request
 
 log = get_logger("web")
 
+# 按 database_url 缓存 store 实例，避免每次请求都新建数据库连接
+_store_cache: dict[str, object] = {}
+
 
 def _get_user_id(handler: MomentumHandler) -> str | None:
     token = handler.headers.get("Authorization", "").replace("Bearer ", "")
@@ -37,8 +40,10 @@ class MomentumHandler(BaseHTTPRequestHandler):
 
     @property
     def store(self):
-        from ..storage import create_task_store
-        return create_task_store(self.database_url)
+        if self.database_url not in _store_cache:
+            from ..storage import create_task_store
+            _store_cache[self.database_url] = create_task_store(self.database_url)
+        return _store_cache[self.database_url]
 
     def send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
         self._last_status = status.value

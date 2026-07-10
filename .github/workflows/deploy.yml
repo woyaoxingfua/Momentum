@@ -70,4 +70,5 @@ jobs:
              echo 'Step 5: Checking service status...' && \
              sleep 5 && \
              sudo systemctl is-active --quiet '$VM_SERVICE_NAME' || echo 'Warning: service may still be starting...' && \
-             echo 'Deployment completed.'"
+             echo 'Deployment completed.' && \
+             exit 0"
