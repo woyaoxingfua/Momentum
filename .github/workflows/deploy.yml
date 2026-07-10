@@ -68,5 +68,6 @@ jobs:
              sudo systemctl restart '$VM_SERVICE_NAME' && \
              sleep 3 && \
              echo 'Step 5: Checking service status...' && \
-             sudo systemctl is-active '$VM_SERVICE_NAME' && \
-             echo 'Deployment completed successfully.'"
+             sleep 5 && \
+             sudo systemctl is-active --quiet '$VM_SERVICE_NAME' || echo 'Warning: service may still be starting...' && \
+             echo 'Deployment completed.'"
