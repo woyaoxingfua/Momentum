@@ -62,7 +62,7 @@ jobs:
              echo 'Step 2: Activating virtual environment...' && \
              source .venv/bin/activate && \
              echo 'Step 3: Installing dependencies...' && \
-             pip install -e '.[dev]' --quiet && \
+             pip install -e '.[mysql,dev]' --quiet && \
              echo 'Step 4: Restarting systemd service...' && \
              sudo systemctl daemon-reload && \
              sudo systemctl restart '$VM_SERVICE_NAME' && \

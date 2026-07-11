@@ -110,8 +110,20 @@ def main() -> None:
     chat_parser.add_argument("message")
 
     serve_parser = subparsers.add_parser("serve", help="Start the local web app.")
-    serve_parser.add_argument("--host", default="127.0.0.1")
-    serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument("--host", default=None, help="监听地址（默认走 momentum.config.json 或 127.0.0.1）。")
+    serve_parser.add_argument("--port", type=int, default=None, help="监听端口（默认走 momentum.config.json 或 8765）。")
+
+    mcp_parser = subparsers.add_parser("mcp", help="Start the MCP server for external AI agents.")
+    mcp_parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio",
+                            help="Transport: stdio (local, default) or sse (HTTP).")
+    mcp_parser.add_argument("--host", default=None, help="SSE 模式监听地址（默认走 momentum.config.json 或 127.0.0.1）。")
+    mcp_parser.add_argument("--port", type=int, default=None, help="SSE 模式监听端口（默认走 momentum.config.json 或 8766）。")
+    mcp_parser.add_argument("--user", default=None, help="目标用户（默认 MOMENTUM_USER 或 default）。")
+
+    init_parser = subparsers.add_parser("init", help="配置向导：交互式完成全部配置。")
+    init_parser.add_argument("--db", default=None, help="预设的数据库 URL（跳过 DB 选择步）。")
+    init_parser.add_argument("--non-interactive", action="store_true", help="非交互模式：用默认值+已有配置。")
+    init_parser.add_argument("--skip-db-check", action="store_true", help="跳过 DB 连接测试。")
 
     args = parser.parse_args()
 
@@ -125,6 +137,17 @@ def main() -> None:
         setup_logging(log_file=args.log_file, log_dir=args.log_dir)
 
     database_url = args.database_url
+    # init 命令自己管理 store 创建，提前创建会在 DB 未配置时崩溃
+    if args.command == "init":
+        from momentum_agent.setup_wizard import run_wizard
+
+        run_wizard(
+            db_url=args.db,
+            non_interactive=args.non_interactive,
+            skip_db_check=args.skip_db_check,
+        )
+        return
+
     store = create_task_store(database_url)
     user_id = get_current_user()
 
@@ -188,8 +211,28 @@ def main() -> None:
     elif args.command == "chat":
         print(asyncio.run(run_agent_message(database_url, args.message, user_id=user_id)))
     elif args.command == "serve":
-        log.info("starting server %s:%s", args.host, args.port)
-        run_server(database_url, host=args.host, port=args.port)
+        # 回退链：--host/--port > env > momentum.config.json > 默认
+        from momentum_agent.wizard_config import get_web_host, get_web_port
+
+        web_host = get_web_host(args.host)
+        web_port = get_web_port(args.port)
+        log.info("starting server %s:%s", web_host, web_port)
+        run_server(database_url, host=web_host, port=web_port)
+    elif args.command == "mcp":
+        from momentum_agent.mcp_server import run_mcp_server
+        from momentum_agent.wizard_config import get_mcp_host, get_mcp_port
+
+        mcp_user = args.user or user_id
+        mcp_host = get_mcp_host(args.host)
+        mcp_port = get_mcp_port(args.port)
+        log.info("starting MCP server transport=%s user=%r", args.transport, mcp_user)
+        run_mcp_server(
+            database_url,
+            transport=args.transport,
+            user_id=mcp_user,
+            host=mcp_host,
+            port=mcp_port,
+        )
 
 
 def print_tasks(store: TaskStore, status: TaskStatus, *, user_id: str = DEFAULT_USER_ID) -> None:

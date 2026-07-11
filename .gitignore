@@ -16,6 +16,7 @@ build/
 
 # Environment secrets
 .env
+momentum.config.json
 
 # Runtime data
 .momentum/
