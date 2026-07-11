@@ -63,13 +63,78 @@ cd Momentum
 
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e ".[dev,wizard]"
 
+# 方式一（推荐）：配置向导，交互式完成 DB / AI / 安全 / 服务等全部配置
+momentum-agent init
+
+# 方式二：直接启动（用默认 SQLite + 默认配置）
 momentum-agent serve
 # 打开 http://127.0.0.1:8765
 ```
 
-默认账号：`default` / `momentum`（建议登录后立即修改密码）。
+默认账号：`default` / `momentum`（`init` 会强制改密；直接 `serve` 建议登录后立即修改）。
+
+---
+
+## 🪄 配置向导（`momentum-agent init`）
+
+新环境下部署 Momentum 最友好的方式。一行命令，终端 TUI 引导你完成**全量配置**，跑完一键可用。
+
+### 用法
+
+```bash
+momentum-agent init                          # 交互模式（默认）
+momentum-agent init --non-interactive        # 非交互：用默认值+已有配置（CI 友好）
+momentum-agent init --db sqlite:///.momentum/tasks.db  # 预设 DB URL，跳过 DB 选择步
+momentum-agent init --skip-db-check          # 跳过 DB 连接测试
+```
+
+### 向导覆盖的 11 步
+
+| 步 | 内容 | 写到哪里 |
+|----|------|---------|
+| 1 | 数据库后端（SQLite / MySQL / Azure）+ 连接测试 | `.env` |
+| 2 | 安全：检测并强制改 `default/momentum` 弱口令 | DB（不留明文） |
+| 3 | AI 提供商（OpenAI 兼容 / Ollama / 跳过）+ ping 测试 | `user_memory` |
+| 4 | 工作偏好（视觉识别 / 每日容量 / 工作时间） | `user_memory` |
+| 5 | 默认位置（城市） | `user_memory` |
+| 6 | 心跳提醒（启用 / 起止小时 / 间隔） | `user_memory` |
+| 7 | Web 服务（host / port + 端口占用检测） | `momentum.config.json` |
+| 8 | MCP Server SSE（可选 + API Key 鉴权） | `momentum.config.json` + `.env` |
+| 9 | 日志（级别 / 目录 / 轮转） | `.env` |
+| 10 | 进阶 AI 选项（思考模式 / 推理强度 / 追踪） | `.env` |
+| 11 | 配置预览 + 确认写入 + 可选启动 serve | — |
+
+### 配置文件说明
+
+向导生成 / 维护的文件：
+
+| 文件 | 存什么 | 是否进 Git |
+|------|--------|-----------|
+| `.env` | 敏感凭据和进程级配置（DB URL、API key、日志参数） | ❌ 已忽略 |
+| `momentum.config.json` | 非敏感的服务监听地址、端口 | ❌ 已忽略 |
+| `user_memory` 表（DB） | 用户级运行时偏好（AI 配置、工作偏好等） | — |
+
+### 启动级配置的回退链
+
+`serve` 和 `mcp` 子命令的 `--host/--port` 按以下顺序解析：
+
+```
+CLI flag (--host/--port)              ← 最高优先级
+  ↓
+环境变量 (MOMENTUM_WEB_HOST/PORT 等)
+  ↓
+momentum.config.json                  ← 向导写这里
+  ↓
+硬编码默认 (127.0.0.1:8765 / 8766)    ← 最低
+```
+
+**已有部署不受影响**：只要还在用原来的 flag/env 启动，行为完全不变。
+
+### 重复运行
+
+`init` 可重复跑。每一步都会读取现有配置作为默认值——**回车保留，输入新值覆盖**。安全步骤检测到弱口令才强制改，已改就跳过。
 
 ---
 

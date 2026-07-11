@@ -23,6 +23,10 @@ mcp = [
     "uvicorn>=0.31",
     "starlette>=0.37",
 ]
+wizard = [
+    "questionary>=2.0",
+    "rich>=13.0",
+]
 
 [project.scripts]
 momentum-agent = "momentum_agent.cli:main"
