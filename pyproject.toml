@@ -18,6 +18,11 @@ dev = [
 mysql = [
     "pymysql>=1.1",
 ]
+mcp = [
+    "mcp>=1.28",
+    "uvicorn>=0.31",
+    "starlette>=0.37",
+]
 
 [project.scripts]
 momentum-agent = "momentum_agent.cli:main"

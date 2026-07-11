@@ -101,6 +101,13 @@ def main() -> None:
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8765)
 
+    mcp_parser = subparsers.add_parser("mcp", help="Start the MCP server for external AI agents.")
+    mcp_parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio",
+                            help="Transport: stdio (local, default) or sse (HTTP).")
+    mcp_parser.add_argument("--host", default="127.0.0.1", help="SSE 模式监听地址。")
+    mcp_parser.add_argument("--port", type=int, default=8766, help="SSE 模式监听端口。")
+    mcp_parser.add_argument("--user", default=None, help="目标用户（默认 MOMENTUM_USER 或 default）。")
+
     args = parser.parse_args()
 
     # logging
@@ -178,6 +185,18 @@ def main() -> None:
     elif args.command == "serve":
         log.info("starting server %s:%s", args.host, args.port)
         run_server(database_url, host=args.host, port=args.port)
+    elif args.command == "mcp":
+        from .mcp_server import run_mcp_server
+
+        mcp_user = args.user or user_id
+        log.info("starting MCP server transport=%s user=%r", args.transport, mcp_user)
+        run_mcp_server(
+            database_url,
+            transport=args.transport,
+            user_id=mcp_user,
+            host=args.host,
+            port=args.port,
+        )
 
 
 def print_tasks(store: TaskStore, status: TaskStatus, *, user_id: str = DEFAULT_USER_ID) -> None:
