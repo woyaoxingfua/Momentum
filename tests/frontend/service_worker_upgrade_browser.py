@@ -126,12 +126,19 @@ def main() -> int:
             api_js = static / "js" / "api.js"
             api_js.write_text(MARKER + "\n" + api_js.read_text(encoding="utf-8"), encoding="utf-8")
 
+            # 先确认服务端提供的就是副本里的新资源，否则后面的断言会误导排查方向。
+            probe_body = urlopen(f"{origin}/js/api.js?cachebust={secrets.token_hex(4)}", timeout=10).read().decode("utf-8", "replace")
+            server_serves_marker = MARKER in probe_body
+            check("服务端提供的是副本中的新资源", server_serves_marker, f"marker={server_serves_marker}")
+
             # 老用户只会普通刷新几次：断言最终拿到新缓存与新资源，且旧缓存被清掉。
             seen_cache: list[str] = []
             marker_seen = False
-            for _ in range(5):
+            reloads_used = 0
+            for _ in range(8):
+                reloads_used += 1
                 page.reload(wait_until="domcontentloaded")
-                page.wait_for_timeout(1500)
+                page.wait_for_timeout(2000)
                 page.evaluate("() => navigator.serviceWorker.ready.then(() => true)")
                 seen_cache = page.evaluate("""async () => {
                     const names = await caches.keys();
@@ -157,6 +164,24 @@ def main() -> int:
                 };
             }""")
             check("没有卡在 waiting 的旧 SW", sw_state["waiting"] is None and sw_state["active"] == "activated", json.dumps(sw_state))
+            diagnostics = {
+                "firstCache": first_cache,
+                "nextCache": next_cache,
+                "observedCaches": seen_cache,
+                "markerSeen": marker_seen,
+                "serverServesMarker": server_serves_marker,
+                "swState": sw_state,
+                "reloadsUsed": reloads_used,
+                "checks": [{"name": n, "ok": o, "detail": d} for n, o, d in checks],
+            }
+            print("DIAGNOSTICS " + json.dumps(diagnostics, ensure_ascii=False))
+            summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+            if summary_path:
+                with open(summary_path, "a", encoding="utf-8") as handle:
+                    handle.write("### Service Worker upgrade diagnostics" + chr(10) + chr(10))
+                    handle.write("~~~json" + chr(10))
+                    handle.write(json.dumps(diagnostics, ensure_ascii=False, indent=2))
+                    handle.write(chr(10) + "~~~" + chr(10))
             context.close()
             browser.close()
             browser = None
