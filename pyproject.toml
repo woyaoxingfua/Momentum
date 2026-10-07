@@ -5,7 +5,11 @@ description = "Personal task todo agent with OpenAI Agents SDK integration."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "openai-agents>=0.2.0",
+    # 经过验证的组合：openai-agents 0.23.1 + mcp 1.30.0（见 review/Momentum_REVIEW_archive_20261007.md）。
+    # Agents SDK 是 0.Y.Z，minor 版本可能破坏兼容；mcp 的低层 Server API 在 2.x 已变化，
+    # 所以两者都需要上界，否则任一次全新安装都可能解析到未验证的版本。
+    "openai-agents>=0.2.0,<0.24",
+    "mcp>=1.28,<2",
     "pydantic>=2.7",
     "python-dotenv>=1.0",
 ]
@@ -20,7 +24,7 @@ mysql = [
 ]
 mcp = [
     # The low-level Server API used here is the MCP SDK 1.x API.
-    "mcp>=1.28,<2",
+    # mcp 本身已在上面的核心依赖里固定上界，这里只补 HTTP 传输所需的 Web 栈。
     "uvicorn>=0.31",
     "starlette>=0.37",
 ]

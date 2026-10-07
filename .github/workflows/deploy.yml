@@ -70,13 +70,13 @@ jobs:
              echo 'Step 2: Activating virtual environment...' && \
              source .venv/bin/activate && \
              echo 'Step 3: Installing dependencies...' && \
-             pip install -e '.[mysql,dev]' --quiet && \
+             pip install -e '.[mysql,dev,mcp]' --quiet && \
              echo 'Step 4: Restarting systemd service...' && \
              sudo systemctl daemon-reload && \
              sudo systemctl restart '$VM_SERVICE_NAME' && \
              sleep 3 && \
              echo 'Step 5: Checking service status...' && \
              sleep 5 && \
-             sudo systemctl is-active --quiet '$VM_SERVICE_NAME' || echo 'Warning: service may still be starting...' && \
-             echo 'Deployment completed.' && \
-             exit 0"
+             sudo systemctl is-active --quiet '$VM_SERVICE_NAME' && \
+             echo 'Service is active.' || \
+             { echo 'ERROR: deployment failed, or the service is not active after restart'; sudo systemctl status '$VM_SERVICE_NAME' --no-pager -l | tail -n 30; exit 1; }"
