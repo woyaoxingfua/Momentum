@@ -204,3 +204,58 @@ class TestRequestBodySizeLimit:
         from momentum_agent.web.server import MAX_REQUEST_BODY
 
         assert MAX_REQUEST_BODY == 2 * 1024 * 1024
+
+
+class TestHandleGetWeather:
+    def test_returns_real_weather_fields(self, monkeypatch):
+        from urllib.parse import urlsplit
+        from momentum_agent.web.handlers import handle_get_weather
+        from momentum_agent.services import weather
+
+        handler = MockHandler()
+        handler.store.get_memory.return_value = "北京"
+        monkeypatch.setattr(weather, "get_weather", lambda city: {
+            "city": city, "country": "中国", "temperature": 18.5, "humidity": 72,
+            "condition": "Rain", "condition_cn": "小雨", "emoji": "🌦️",
+            "tips": ["带伞"], "latitude": 39.9, "longitude": 116.4,
+            "weather_code": 61, "source": "Open-Meteo", "updated_at": "2026-10-03T10:00",
+        })
+
+        handle_get_weather(handler, "alice", urlsplit("/api/weather"))
+        payload = json.loads(handler._body)
+        assert payload["temperature"] == 18.5
+        assert payload["humidity"] == 72
+        assert payload["source"] == "Open-Meteo"
+        assert payload["weather_code"] == 61
+        assert payload["updated_at"] == "2026-10-03T10:00"
+
+    def test_upstream_failure_returns_bad_gateway(self, monkeypatch):
+        from urllib.parse import urlsplit
+        from momentum_agent.web.handlers import handle_get_weather
+        from momentum_agent.services import weather
+
+        handler = MockHandler()
+        handler.store.get_memory.return_value = "北京"
+
+        def fail(_city):
+            raise weather.WeatherServiceError("offline")
+
+        monkeypatch.setattr(weather, "get_weather", fail)
+        handle_get_weather(handler, "alice", urlsplit("/api/weather"))
+        assert handler._status == HTTPStatus.BAD_GATEWAY
+        assert json.loads(handler._body)["error"]
+
+    def test_unknown_city_returns_not_found(self, monkeypatch):
+        from urllib.parse import urlsplit
+        from momentum_agent.web.handlers import handle_get_weather
+        from momentum_agent.services import weather
+
+        handler = MockHandler()
+        handler.store.get_memory.return_value = "北京"
+
+        def missing(_city):
+            raise weather.CityNotFoundError("no city")
+
+        monkeypatch.setattr(weather, "get_weather", missing)
+        handle_get_weather(handler, "alice", urlsplit("/api/weather"))
+        assert handler._status == HTTPStatus.NOT_FOUND

@@ -1,0 +1,59 @@
+{
+  "advice": {
+    "advice": "先完成一小步：整理本周研究摘要。",
+    "suggestion": {
+      "task_id": 419,
+      "title": "整理本周研究摘要",
+      "status": "todo",
+      "estimated_minutes": 35
+    }
+  },
+  "doingVsTodo": {
+    "advice": "先完成一小步：整理本周研究摘要。",
+    "todo": {
+      "task_id": 419,
+      "title": "整理本周研究摘要",
+      "status": "todo"
+    },
+    "suggestion": {
+      "task_id": 527,
+      "title": "核对实验结果",
+      "status": "doing",
+      "estimated_minutes": 20
+    }
+  },
+  "suggestionDoing": {
+    "task_id": 527,
+    "title": "核对实验结果",
+    "status": "doing",
+    "estimated_minutes": 20
+  },
+  "review": {
+    "timeZone": "Asia/Tokyo",
+    "localDate": "2026-10-03",
+    "dayStartUtc": "2026-10-02T15:00:00Z",
+    "dayEndUtcExclusive": "2026-10-03T15:00:00Z",
+    "completed_count": 2,
+    "completed_events": [
+      {
+        "task_id": 419,
+        "completed_at": "2026-10-03T08:15:00Z",
+        "title": "整理本周研究摘要",
+        "estimated_minutes_reference": 180
+      },
+      {
+        "task_id": 611,
+        "completed_at": "2026-10-03T09:30:00Z",
+        "title": "发送项目进度邮件",
+        "estimated_minutes_reference": 10
+      }
+    ],
+    "today_focus_actual_seconds": 3725,
+    "today_focus_session_count": 3,
+    "focus_attribution_note": "跨午夜的专注按会话开始日期归属；当天结束的会话仍以实际记录秒数计入。"
+  },
+  "startConflict": {
+    "error": "任务已关闭，无法开始专注。",
+    "status": 409
+  }
+}

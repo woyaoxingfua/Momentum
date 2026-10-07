@@ -3,13 +3,37 @@ const pendingRequests = new Map();
 
 function requestKey(url, options = {}) {
   const method = (options.method || "GET").toUpperCase();
-  return `${method}:${url}:${options.body || ""}`;
+  const extraHeaders = options.headers || {};
+  let idempotencyKey = "";
+  if (typeof extraHeaders.forEach === "function") {
+    extraHeaders.forEach((value, name) => {
+      if (String(name).toLowerCase() === "idempotency-key") idempotencyKey = value;
+    });
+  } else {
+    const entry = Object.entries(extraHeaders).find(([name]) => name.toLowerCase() === "idempotency-key");
+    if (entry) idempotencyKey = entry[1];
+  }
+  return `${method}:${url}:${options.body || ""}:${idempotencyKey}`;
+}
+
+function mergeHeaders(base, extra) {
+  const merged = { ...base };
+  const entries = typeof extra?.forEach === "function"
+    ? (() => { const values = []; extra.forEach((value, name) => values.push([name, value])); return values; })()
+    : Object.entries(extra || {});
+  for (const [name, value] of entries) {
+    const priorName = Object.keys(merged).find((existing) => existing.toLowerCase() === String(name).toLowerCase());
+    if (priorName) delete merged[priorName];
+    merged[name] = value;
+  }
+  return merged;
 }
 
 export async function requestJson(url, options = {}) {
   const token = localStorage.getItem("momentum_token");
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const defaultHeaders = { "Content-Type": "application/json" };
+  if (token) defaultHeaders["Authorization"] = `Bearer ${token}`;
+  const headers = mergeHeaders(defaultHeaders, options.headers);
 
   const method = (options.method || "GET").toUpperCase();
   const key = requestKey(url, options);
@@ -24,7 +48,7 @@ export async function requestJson(url, options = {}) {
 
   const promise = (async () => {
     try {
-      const response = await fetch(url, { headers, ...options, signal: controller.signal });
+      const response = await fetch(url, { ...options, headers, signal: controller.signal });
       clearTimeout(timeoutId);
 
       if (response.status === 401) {
@@ -35,7 +59,10 @@ export async function requestJson(url, options = {}) {
 
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload.error || "请求失败");
+        const error = new Error(payload.error || "请求失败");
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
       }
       return payload;
     } catch (err) {
@@ -49,7 +76,10 @@ export async function requestJson(url, options = {}) {
 
   if (method !== "GET" && method !== "HEAD") {
     pendingRequests.set(key, promise);
-    promise.finally(() => pendingRequests.delete(key));
+    promise.then(
+      () => pendingRequests.delete(key),
+      () => pendingRequests.delete(key),
+    );
   }
 
   return promise;
@@ -96,7 +126,15 @@ export function formatDue(value) {
 export function toDatetimeLocal(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toISOString().slice(0, 16);
+  if (!Number.isFinite(d.getTime())) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function fromDatetimeLocal(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 export function priorityText(priority) {

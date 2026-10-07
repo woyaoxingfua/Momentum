@@ -1,4 +1,8 @@
 import { requestJson } from "/js/api.js";
+import { getEstimationAccuracyDisplay } from "/js/estimation-accuracy.mjs";
+import { getDailyWorkloadEstimate, taskDueLocalDate } from "./daily-workload.mjs";
+
+const DAILY_WORKLOAD_REFRESH_KEY = "momentum_daily_workload_refresh";
 
 const COLORS = {
   accent: "#f59e0b",
@@ -43,11 +47,197 @@ const CHART_DEFAULTS = {
   },
 };
 
+function localDateKey(date) {
+  if (!date || typeof date.getTime !== "function" || !Number.isFinite(date.getTime())) return null;
+  const year = String(date.getFullYear()).padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function parseDailyCapacity(configText) {
+  if (typeof configText !== "string" || !configText || configText.startsWith("没有配置项")) return 45;
+
+  let configuredValue = null;
+  for (const line of configText.split("\n")) {
+    if (!line.includes("=")) continue;
+    const [key, ...rest] = line.replaceAll("  ", "").split("=");
+    if (key.trim() === "daily_capacity_minutes") configuredValue = rest.join("=").trim();
+  }
+  if (configuredValue === null || configuredValue === "" || !/^\d+$/.test(configuredValue)) return 45;
+
+  const capacity = Number(configuredValue);
+  return Number.isSafeInteger(capacity) ? capacity : 45;
+}
+
+export function summarizeDailyWorkload(todoTasks, doingTasks, capacityMinutes, now = new Date()) {
+  const today = localDateKey(now);
+  const capacity = Number.isSafeInteger(capacityMinutes) && capacityMinutes >= 0 ? capacityMinutes : 45;
+  let estimatedMinutes = 0;
+  let unestimatedTaskCount = 0;
+  let eligibleTaskCount = 0;
+
+  for (const task of [...(Array.isArray(todoTasks) ? todoTasks : []), ...(Array.isArray(doingTasks) ? doingTasks : [])]) {
+    const estimate = getDailyWorkloadEstimate(task, today);
+    if (estimate === null) continue;
+
+    eligibleTaskCount += 1;
+    if (estimate > 0) estimatedMinutes += estimate;
+    else unestimatedTaskCount += 1;
+  }
+
+  const overCapacityMinutes = Math.max(0, estimatedMinutes - capacity);
+  const remainingMinutes = Math.max(0, capacity - estimatedMinutes);
+  return {
+    capacityMinutes: capacity,
+    estimatedMinutes,
+    eligibleTaskCount,
+    unestimatedTaskCount,
+    overCapacityMinutes,
+    remainingMinutes,
+    capacityPercent: capacity > 0 ? (estimatedMinutes / capacity) * 100 : null,
+  };
+}
+
+export function summarizeFutureDueDistribution(todoTasks, doingTasks, now = new Date()) {
+  const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + index + 1, 12);
+    return {
+      dateKey: localDateKey(date),
+      label: `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${weekdays[date.getDay()]}`,
+      estimatedMinutes: 0,
+      unestimatedTaskCount: 0,
+      eligibleTaskCount: 0,
+    };
+  });
+  const daysByDate = new Map(days.map((day) => [day.dateKey, day]));
+
+  for (const task of [...(Array.isArray(todoTasks) ? todoTasks : []), ...(Array.isArray(doingTasks) ? doingTasks : [])]) {
+    if (!task || (task.status !== "todo" && task.status !== "doing")) continue;
+    const day = daysByDate.get(taskDueLocalDate(task.due_at));
+    if (!day) continue;
+
+    day.eligibleTaskCount += 1;
+    const estimate = Number(task.estimated_minutes);
+    if (Number.isFinite(estimate) && estimate > 0) day.estimatedMinutes += estimate;
+    else day.unestimatedTaskCount += 1;
+  }
+
+  return days;
+}
+
+export async function loadDailyWorkload(request = requestJson, now = new Date()) {
+  const [configPayload, todoPayload, doingPayload] = await Promise.all([
+    request("/api/config"),
+    request("/api/tasks?status=todo"),
+    request("/api/tasks?status=doing"),
+  ]);
+  if (!todoPayload || !Array.isArray(todoPayload.tasks)) throw new Error("待办任务列表格式无效");
+  if (!doingPayload || !Array.isArray(doingPayload.tasks)) throw new Error("进行中任务列表格式无效");
+
+  const capacity = parseDailyCapacity(configPayload?.config);
+  return {
+    ...summarizeDailyWorkload(todoPayload.tasks, doingPayload.tasks, capacity, now),
+    futureDueDistribution: summarizeFutureDueDistribution(todoPayload.tasks, doingPayload.tasks, now),
+  };
+}
+
+function renderDailyWorkload(summary) {
+  document.getElementById("dailyLoadMinutes").textContent = `${summary.estimatedMinutes} / ${summary.capacityMinutes} 分钟`;
+  const difference = summary.overCapacityMinutes > 0
+    ? `超出 ${summary.overCapacityMinutes} 分钟`
+    : summary.remainingMinutes > 0
+      ? `余量 ${summary.remainingMinutes} 分钟`
+      : "刚好达到容量";
+  document.getElementById("dailyLoadDifference").textContent = difference;
+  document.getElementById("dailyLoadRatio").textContent = summary.capacityPercent === null
+    ? "容量占比未计算（容量为 0）"
+    : `容量占比 ${summary.capacityPercent.toFixed(0)}%`;
+  const unestimatedLink = document.getElementById("dailyUnestimatedLink");
+  if (unestimatedLink) unestimatedLink.textContent = `${summary.unestimatedTaskCount} 个`;
+  else document.getElementById("dailyUnestimatedCount").textContent = `未估时任务：${summary.unestimatedTaskCount} 个`;
+  document.getElementById("dailyLoadStatus").textContent = `纳入 ${summary.eligibleTaskCount} 个本地今日及逾期的开放任务`;
+  renderFutureDueDistribution(summary.futureDueDistribution);
+}
+
+function renderFutureDueDistribution(days) {
+  const list = document.getElementById("futureDueDays");
+  list.replaceChildren();
+  for (const day of days) {
+    const item = document.createElement("div");
+    item.className = "future-due-day";
+    item.setAttribute("role", "listitem");
+
+    const link = document.createElement("a");
+    link.className = "future-due-link";
+    link.href = `/?due_on=${encodeURIComponent(day.dateKey)}`;
+    link.setAttribute("aria-label", `${day.label}：查看当天开放任务`);
+
+    const date = document.createElement("span");
+    date.className = "future-due-date";
+    date.textContent = day.label;
+
+    const totals = document.createElement("span");
+    totals.className = "future-due-totals";
+    totals.textContent = `正估时合计 ${day.estimatedMinutes} 分钟 · 未估时 ${day.unestimatedTaskCount} 个`;
+
+    link.append(date, totals);
+    item.append(link);
+    list.append(item);
+  }
+  document.getElementById("futureDueStatus").textContent = "已统计未来 7 个完整自然日（不含今日）";
+}
+
+function renderDailyWorkloadError(error) {
+  document.getElementById("dailyLoadMinutes").textContent = "--";
+  document.getElementById("dailyLoadDifference").textContent = "--";
+  document.getElementById("dailyLoadRatio").textContent = "容量占比：--";
+  const unestimatedLink = document.getElementById("dailyUnestimatedLink");
+  if (unestimatedLink) unestimatedLink.textContent = "--";
+  else document.getElementById("dailyUnestimatedCount").textContent = "未估时任务：--";
+  document.getElementById("dailyLoadStatus").textContent = `今日负载加载失败：${error?.message || "请求失败"}`;
+  document.getElementById("futureDueDays").replaceChildren();
+  document.getElementById("futureDueStatus").textContent = `未来截止日分布加载失败：${error?.message || "请求失败"}`;
+}
+
+export async function refreshDailyWorkload(request = requestJson, now = new Date()) {
+  const dailyLoadLink = document.getElementById("dailyLoadLink");
+  if (dailyLoadLink) {
+    const today = localDateKey(now);
+    dailyLoadLink.href = `/?due_on=${encodeURIComponent(today)}`;
+  }
+  const unestimatedLink = document.getElementById("dailyUnestimatedLink");
+  if (unestimatedLink) unestimatedLink.href = "/?unestimated_due_by_today=1";
+
+  try {
+    const summary = await loadDailyWorkload(request, now);
+    renderDailyWorkload(summary);
+    return summary;
+  } catch (error) {
+    renderDailyWorkloadError(error);
+    return null;
+  }
+}
+
+export function bindDailyWorkloadRefresh(target = globalThis.window, request = requestJson) {
+  if (!target || typeof target.addEventListener !== "function") return () => {};
+  const onStorage = (event) => {
+    if (event?.key === DAILY_WORKLOAD_REFRESH_KEY) return refreshDailyWorkload(request);
+    return undefined;
+  };
+  target.addEventListener("storage", onStorage);
+  return () => target.removeEventListener?.("storage", onStorage);
+}
+
 async function init() {
   if (!localStorage.getItem("momentum_token")) {
     window.location.href = "/login.html";
     return;
   }
+
+  bindDailyWorkloadRefresh();
+  void refreshDailyWorkload();
 
   try {
     const data = await requestJson("/api/stats");
@@ -65,7 +255,16 @@ function renderStats(data) {
   document.getElementById("completionRate").textContent = `${(p.completion_rate * 100).toFixed(0)}%`;
   document.getElementById("completionDetail").textContent = `${p.total_completed} / ${p.total_created}`;
   document.getElementById("avgHours").textContent = p.avg_completion_hours ? p.avg_completion_hours.toFixed(1) : "--";
-  document.getElementById("estimationAccuracy").textContent = p.estimation_accuracy ? `${(p.estimation_accuracy * 100).toFixed(0)}%` : "--";
+  const trackedTasks = p.focus_tracked_tasks || 0;
+  document.getElementById("avgFocusMinutes").textContent = trackedTasks
+    ? p.avg_actual_focus_minutes.toFixed(1)
+    : "--";
+  document.getElementById("focusTrackedDetail").textContent = trackedTasks
+    ? `基于 ${trackedTasks} 个有实际记录的完成任务（分钟 / 任务）`
+    : "尚无实际专注记录；旧计划时长不会当作实际值";
+  const estimationDisplay = getEstimationAccuracyDisplay(p.estimation_accuracy, p.estimated_focus_tasks);
+  document.getElementById("estimationAccuracy").textContent = estimationDisplay.value;
+  document.getElementById("estimationDetail").textContent = estimationDisplay.detail;
   document.getElementById("peakHour").textContent = p.peak_completion_hour !== null ? `${p.peak_completion_hour}:00` : "--";
 }
 

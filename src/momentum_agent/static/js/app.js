@@ -1,51 +1,22 @@
 import { requestJson } from "./api.js";
-import { initTasks, saveEdit, saveSubtask, savePostpone, bindPostponeOptions, loadTasks, setTaskStatusFilter, renderTasks, setSortMode, getSortMode } from "./tasks.js";
+import { initTasks, saveEdit, saveSubtask, savePostpone, loadTasks, setTaskStatusFilter, getTaskStatusFilter, renderTasks, renderCurrentTasks, setSortMode, getSortMode, openTaskEditDialog, completeTask as completeTaskAction } from "./tasks.js";
 import { initChat, setAfterChat, sendChat, sendToAgent } from "./chat.js";
-import { initAdvice, loadAdvice, loadReview, loadAdviceWithAI, loadReviewWithAI } from "./advice.js";
+import { initAdvice, loadAdvice, loadReview, getTodayReviewUrl, syncReviewTask } from "./advice.js";
+import { formatActualFocusDuration } from "./advice-review.mjs";
 import { initConfig, loadConfig, saveConfig, setOnConfigSaved } from "./config.js";
 import { initHeartbeat, loadHeartbeatConfig, startHeartbeatChecks } from "./heartbeat.js";
 import { initNotifications } from "./notifications.js";
+import { initBackground as initBackgroundSettings, bindBackgroundSettings } from "./background.mjs";
+import { initAppearance, bindAppearanceSettings, loadAppearancePreference } from "./appearance.mjs";
+import { bindCitySettings, loadCityPreference } from "./city.mjs";
+import { bindBackupImport, exportBackupData } from "./backup.mjs";
 
 // ── Theme ─────────────────────────────────────────────────────
-function initTheme() {
-  const saved = localStorage.getItem("momentum_theme");
-  const theme = saved || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-  applyTheme(theme);
-}
-function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  localStorage.setItem("momentum_theme", theme);
-  const moon = document.getElementById("themeIconMoon");
-  const sun = document.getElementById("themeIconSun");
-  if (moon && sun) {
-    moon.style.display = theme === "dark" ? "none" : "block";
-    sun.style.display = theme === "dark" ? "block" : "none";
-  }
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", theme === "light" ? "#f5f3ef" : "#121110");
-}
-function toggleTheme() {
-  const current = document.documentElement.getAttribute("data-theme") || "dark";
-  applyTheme(current === "dark" ? "light" : "dark");
-}
-initTheme();
+const appearance = initAppearance(document.documentElement, localStorage);
+function toggleTheme() { appearance.toggle(); }
 
 // ── Background image ──────────────────────────────────────────
-function initBackground() {
-  const url = localStorage.getItem("momentum_bg_url");
-  const opacity = localStorage.getItem("momentum_bg_opacity") || "15";
-  applyBackground(url, opacity);
-}
-function applyBackground(url, opacity) {
-  if (url) {
-    document.documentElement.style.setProperty("--bg-image", `url("${url}")`);
-    document.documentElement.style.setProperty("--bg-opacity", String(parseInt(opacity) / 100));
-  } else {
-    document.documentElement.style.setProperty("--bg-image", "none");
-    document.documentElement.style.setProperty("--bg-opacity", "0");
-  }
-}
-initBackground();
+initBackgroundSettings(document.documentElement, localStorage);
 
 let onAfterChat = null;
 
@@ -58,6 +29,8 @@ if (!_hasToken) {
 // ── State ────────────────────────────────────────────────────
 let isProviderConfigured = false;
 let uploadedImages = [];
+let backgroundController = null;
+let citySettings = null;
 
 // ── Elements ─────────────────────────────────────────────────
 const $ = (s) => document.querySelector(s);
@@ -75,6 +48,7 @@ const els = {
   searchInput:     $("#searchInput"),
   exportButton:   $("#exportButton"),
   importFile:      $("#importFile"),
+  backupStatus:    $("#backupStatus"),
   tasks:           $("#tasks"),
   taskCount:       $("#taskCount"),
   adviceText:      $("#adviceText"),
@@ -105,7 +79,10 @@ const els = {
   addSubtaskCancelButton: $("#addSubtaskCancelButton"),
   postponeDialog:      $("#postponeDialog"),
   postponeTaskId:      $("#postponeTaskId"),
-  postponeDays:        $("#postponeDays"),
+  postponeCurrentDue:  $("#postponeCurrentDue"),
+  postponeFeedback:    $("#postponeFeedback"),
+  postponeRetryButton: $("#postponeRetryButton"),
+  postponeSubmitButton:$("#postponeSubmitButton"),
   postponeCancelButton:$("#postponeCancelButton"),
   // config
   configProvider:          $("#configProvider"),
@@ -127,7 +104,12 @@ const els = {
 // ── Provider ──────────────────────────────────────────────────
 export async function loadProvider() {
   const payload = await requestJson("/api/provider");
-  els.providerStatus.textContent = payload.provider;
+  const provider = String(payload.provider || "");
+  const readableProvider = provider.replace(/^Agent provider:\s*/i, "");
+  els.providerStatus.textContent = payload.configured
+    ? `已连接 · ${readableProvider || "模型服务"}`
+    : "本地模式 · 尚未连接模型";
+  els.providerStatus.title = provider;
   isProviderConfigured = payload.configured === true;
 }
 
@@ -151,25 +133,16 @@ function onSearchInput() {
 
 // ── Export / Import ────────────────────────────────────────────
 async function exportData() {
-  const payload = await requestJson("/api/export");
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "momentum-export.json";
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-async function importData(file) {
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    await requestJson("/api/import", { method: "POST", body: JSON.stringify({ data }) });
-    await refreshAll();
-  } catch (err) {
-    alert(`导入失败：${err.message}`);
-  }
+  return exportBackupData({
+    requestJson,
+    status: els.backupStatus,
+    download: (url, filename) => {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+    },
+  });
 }
 
 // ── Image upload ─────────────────────────────────────────────
@@ -296,16 +269,47 @@ function openPanel(name) {
 function loadMobileInsights() {
   const body = document.getElementById("mobileInsightsBody");
   if (!body) return;
-  body.innerHTML = '<p class="muted">加载中...</p>';
-  const token = localStorage.getItem("momentum_token");
+  body.replaceChildren();
+  const loading = document.createElement("p");
+  loading.className = "muted";
+  loading.textContent = "加载中...";
+  body.append(loading);
   Promise.all([
-    fetch("/api/advice", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
-    fetch("/api/review", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+    requestJson("/api/advice"),
+    requestJson(getTodayReviewUrl()),
   ]).then(([advice, review]) => {
-    body.innerHTML =
-      `<div class="insight"><span class="insight-label">建议</span><p>${advice.advice || "暂无建议"}</p></div>`
-      + (review.review ? `<div class="insight" style="margin-top:12px;"><span class="insight-label">复盘</span><p style="white-space:pre-line;">${review.review}</p></div>` : "");
-  }).catch(() => { body.innerHTML = '<p class="muted">加载失败</p>'; });
+    body.replaceChildren();
+    const adviceCard = document.createElement("div");
+    adviceCard.className = "insight";
+    const adviceLabel = document.createElement("span");
+    adviceLabel.className = "insight-label";
+    adviceLabel.textContent = "建议";
+    const adviceText = document.createElement("p");
+    adviceText.textContent = advice.advice || "暂无建议";
+    adviceCard.append(adviceLabel, adviceText);
+    body.append(adviceCard);
+
+    const reviewCard = document.createElement("div");
+    reviewCard.className = "insight";
+    reviewCard.style.marginTop = "12px";
+    const reviewLabel = document.createElement("span");
+    reviewLabel.className = "insight-label";
+    reviewLabel.textContent = "今天复盘";
+    const reviewText = document.createElement("p");
+    const completed = Number(review.completed_count) || 0;
+    const actual = formatActualFocusDuration(review.today_focus_actual_seconds);
+    const sessions = Number(review.today_focus_session_count) || 0;
+    reviewText.textContent = `完成 ${completed} 项 · 实际专注 ${actual} · ${sessions} 场${review.focus_attribution_note ? `\n${review.focus_attribution_note}` : ""}`;
+    reviewText.style.whiteSpace = "pre-line";
+    reviewCard.append(reviewLabel, reviewText);
+    body.append(reviewCard);
+  }).catch(() => {
+    body.replaceChildren();
+    const error = document.createElement("p");
+    error.className = "muted";
+    error.textContent = "加载失败";
+    body.append(error);
+  });
 }
 
 function syncMobileSettings() {
@@ -459,8 +463,8 @@ function initMobileNav() {
             if (line.startsWith("data: ")) {
               try {
                 const p = JSON.parse(line.slice(6));
-                if (p.chunk) full += p.chunk;
-                if (p.error) full = p.error;
+                if (p.type === "chunk" && typeof p.text === "string") full += p.text;
+                else if (p.type === "error") full = p.message || "请求失败";
               } catch {}
             }
           }
@@ -522,6 +526,21 @@ function initMobileNav() {
 }
 
 // ── Status tabs ──────────────────────────────────────────────
+function syncSortButton() {
+  if (!els.sortButton) return;
+  const mode = getSortMode();
+  const shortPriorityAvailable = ["todo", "doing"].includes(getTaskStatusFilter());
+  const nextAction = mode === "default"
+    ? { label: "智能排序", title: "按 AI 推荐优先级排序" }
+    : mode === "score"
+      ? shortPriorityAvailable
+        ? { label: "短任务优先", title: "仅按当前已加载任务的预估时长本地排序，不重新请求任务" }
+        : { label: "默认排序", title: "恢复默认时间排序" }
+      : { label: "默认排序", title: "恢复默认时间排序" };
+  els.sortButton.textContent = nextAction.label;
+  els.sortButton.title = nextAction.title;
+}
+
 function initStatusTabs() {
   $$(".status-tab").forEach(tab => {
     tab.addEventListener("click", () => {
@@ -529,6 +548,7 @@ function initStatusTabs() {
       tab.classList.add("active");
       tab.setAttribute("aria-selected", "true");
       setTaskStatusFilter(tab.dataset.status);
+      syncSortButton();
       loadTasks();
     });
   });
@@ -606,6 +626,7 @@ function init() {
       editTags: els.editTags, editNotes: els.editNotes,
     },
     els,
+    syncReviewTask,
   );
 
   // Chat
@@ -617,7 +638,18 @@ function init() {
   setAfterChat(onAfterChat);
 
   // Advice
-  initAdvice(els.adviceText);
+  initAdvice({
+    adviceText: els.adviceText,
+    suggestion: $("#suggestionCard"),
+    review: $("#todayReview"),
+    onRefreshTasks: () => loadTasks(),
+    onEditTask: openTaskEditDialog,
+    onCompleteTask: completeTaskAction,
+    onStartSuggestion: async (suggestion) => {
+      const { startSuggestedFocus } = await import("./focus.js");
+      await startSuggestedFocus(suggestion);
+    },
+  });
 
   // Config
   initConfig({
@@ -639,13 +671,15 @@ function init() {
 
   // Sort toggle
   if (els.sortButton) {
+    syncSortButton();
     els.sortButton.addEventListener("click", () => {
       const current = getSortMode();
-      const next = current === "default" ? "score" : "default";
+      const canUseShortPriority = ["todo", "doing"].includes(getTaskStatusFilter());
+      const next = current === "default" ? "score" : current === "score" ? (canUseShortPriority ? "short" : "default") : "default";
       setSortMode(next);
-      els.sortButton.textContent = next === "score" ? "默认排序" : "智能排序";
-      els.sortButton.title = next === "score" ? "恢复默认时间排序" : "按 AI 推荐优先级排序";
-      loadTasks();
+      syncSortButton();
+      if (next === "short") renderCurrentTasks();
+      else loadTasks();
     });
   }
 
@@ -653,26 +687,13 @@ function init() {
   els.addTaskButton.addEventListener("click", addTask);
   $("#imageUpload")?.addEventListener("change", handleImageUpload);
   els.planTaskButton.addEventListener("click", planTask);
-  els.adviseButton.addEventListener("click", async () => {
-    const tasks = await loadTasks();
-    if (isProviderConfigured) await loadAdviceWithAI(tasks);
-    else await loadAdvice();
-  });
-  els.reviewButton.addEventListener("click", async () => {
-    const tasks = await loadTasks();
-    if (isProviderConfigured) await loadReviewWithAI(tasks);
-    else await loadReview();
-  });
+  els.adviseButton.addEventListener("click", loadAdvice);
+  els.reviewButton.addEventListener("click", loadReview);
   els.refreshButton.addEventListener("click", refreshAll);
   els.chatForm.addEventListener("submit", sendChat);
   els.searchInput.addEventListener("input", onSearchInput);
   els.exportButton.addEventListener("click", exportData);
-  els.importFile?.addEventListener("change", e => {
-    if (e.target.files[0]) {
-      importData(e.target.files[0]);
-      e.target.value = "";
-    }
-  });
+  bindBackupImport({ input: els.importFile, status: els.backupStatus, requestJson, afterImport: refreshAll });
 
   // Enter in task input = add task
   els.taskInput.addEventListener("keydown", e => {
@@ -686,7 +707,6 @@ function init() {
   els.addSubtaskCancelButton.addEventListener("click", () => els.addSubtaskDialog.close());
   els.postponeDialog.querySelector("form").addEventListener("submit", savePostpone);
   els.postponeCancelButton.addEventListener("click", () => els.postponeDialog.close());
-  bindPostponeOptions();
   els.configSaveButton.addEventListener("click", saveConfig);
 
   // ── Mobile nav ──
@@ -706,23 +726,9 @@ function init() {
   });
   const themeToggle = document.getElementById("themeToggle");
   if (themeToggle) themeToggle.addEventListener("click", toggleTheme);
-  const bgApply = document.getElementById("mobileConfigBgApply");
-  const bgClear = document.getElementById("mobileConfigBgClear");
-  const bgUrl = document.getElementById("mobileConfigBgUrl");
-  const bgOpacity = document.getElementById("mobileConfigBgOpacity");
-  if (bgApply) bgApply.addEventListener("click", () => {
-    const url = bgUrl ? bgUrl.value.trim() : "";
-    const opacity = bgOpacity ? bgOpacity.value : "15";
-    localStorage.setItem("momentum_bg_url", url);
-    localStorage.setItem("momentum_bg_opacity", opacity);
-    applyBackground(url, opacity);
-  });
-  if (bgClear) bgClear.addEventListener("click", () => {
-    localStorage.removeItem("momentum_bg_url");
-    localStorage.removeItem("momentum_bg_opacity");
-    applyBackground("", "0");
-    if (bgUrl) bgUrl.value = "";
-  });
+  bindAppearanceSettings();
+  citySettings = bindCitySettings();
+  backgroundController = bindBackgroundSettings();
 
   // Onboarding buttons
   const onboardingNext = document.getElementById("onboardingNext");
@@ -736,6 +742,8 @@ if (_hasToken) {
   init();
   refreshAll().catch(err => { els.adviceText.textContent = err.message; });
   loadConfig();
+  loadCityPreference(citySettings);
+  loadAppearancePreference().then((preferences) => backgroundController?.restore(preferences?.background));
   // 首次使用显示引导
   if (!localStorage.getItem("momentum_onboarded")) {
     showOnboarding();

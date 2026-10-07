@@ -142,20 +142,15 @@ def create_task_tools(store: 'TaskStore', user_id: str):
         Args:
             task_id: 任务ID
         """
-        task = store._get_task(task_id)
-        if not task:
-            return f"task #{task_id} not found"
-        if task.user_id != user_id:
-            return f"task #{task_id} does not belong to you"
-
-        next_task = store.complete_recurring_task(task_id)
-        if not next_task:
+        task, transitioned, next_task = store.complete_task_agent(task_id, user_id=user_id)
+        if task is None:
             return f"任务 #{task_id} 不存在或不属于你"
+        if not transitioned:
+            return f"任务 #{task_id} 已处于完成状态：{task.title}"
+        if next_task is not None:
+            return f"已完成 #{task.id}：{task.title}，已创建下一期任务 #{next_task.id}"
 
-        if next_task.recurrence:
-            return f"已完成 #{task_id}：{next_task.title}，已自动创建下一期任务 #{next_task.id}"
-
-        return f"已完成 #{task_id}：{next_task.title}"
+        return f"已完成 #{task.id}：{task.title}"
 
     @function_tool
     def start_task(task_id: int) -> str:

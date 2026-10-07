@@ -33,9 +33,12 @@ class BehavioralProfile:
     total_dropped: int = 0
 
     # 时间模式
-    avg_completion_hours: float = 0.0  # 平均完成耗时（小时）
-    estimation_accuracy: float = 0.0  # 预估准确率（0-1，1=完美）
-    underestimation_ratio: float = 0.0  # 低估比例（>1 表示经常低估）
+    avg_completion_hours: float = 0.0  # 创建到真实完成事件的平均周期（小时）
+    avg_actual_focus_minutes: float = 0.0  # 有记录任务的平均实际专注分钟
+    focus_tracked_tasks: int = 0  # 有实际专注记录的完成任务数
+    estimated_focus_tasks: int = 0  # 同时有估算和实际专注记录的完成任务数
+    estimation_accuracy: float = 0.0  # 实际专注时长与估算的平均接近度（0-1）
+    underestimation_ratio: float = 0.0  # 实际专注 / 预估的均值（>1 表示经常低估）
 
     # 偏好模式
     peak_completion_hour: int | None = None  # 最常完成任务的时段
@@ -58,6 +61,9 @@ class BehavioralProfile:
             "total_completed": self.total_completed,
             "total_dropped": self.total_dropped,
             "avg_completion_hours": self.avg_completion_hours,
+            "avg_actual_focus_minutes": self.avg_actual_focus_minutes,
+            "focus_tracked_tasks": self.focus_tracked_tasks,
+            "estimated_focus_tasks": self.estimated_focus_tasks,
             "estimation_accuracy": self.estimation_accuracy,
             "underestimation_ratio": self.underestimation_ratio,
             "peak_completion_hour": self.peak_completion_hour,
@@ -127,6 +133,40 @@ class InsightsEngine:
         """返回当前数据库对应的参数占位符（SQLite 用 ?，MySQL 用 %s）。"""
         return "%s" if self._is_mysql else "?"
 
+    def get_completion_events(
+        self, user_id: str = "default", since: datetime | None = None
+    ) -> list[dict[str, Any]]:
+        """读取真实的 done 状态事件；不把后续任务编辑时间当作完成时间。"""
+        sql = f"""
+            SELECT e.task_id, e.created_at AS completed_at
+            FROM task_events e
+            JOIN tasks t ON e.task_id = t.id
+            WHERE t.user_id = {self._ph()}
+              AND e.event_type = 'status_changed'
+              AND e.payload = 'done'
+        """
+        params: list[Any] = [user_id]
+        if since is not None:
+            sql += f" AND e.created_at >= {self._ph()}"
+            params.append(since.isoformat())
+        sql += " ORDER BY e.created_at"
+
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+
+        events = []
+        for row in rows:
+            try:
+                completed_at = datetime.fromisoformat(str(row["completed_at"]).replace("Z", "+00:00"))
+                if completed_at.tzinfo is None:
+                    completed_at = completed_at.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                continue
+            events.append({"task_id": row["task_id"], "completed_at": completed_at})
+        return events
+
     def build_profile(self, user_id: str = "default") -> BehavioralProfile:
         """构建用户行为画像。"""
         profile = BehavioralProfile()
@@ -151,80 +191,80 @@ class InsightsEngine:
             # ── 完成时间分析 ──────────────────────────────────
             cur.execute(
                 f"""
-                SELECT t.id, t.estimated_minutes, t.created_at, t.updated_at
+                SELECT t.id, t.estimated_minutes, t.created_at, MAX(e.created_at) AS completed_at
                 FROM tasks t
+                JOIN task_events e ON e.task_id = t.id
                 WHERE t.user_id = {self._ph()} AND t.status = 'done'
-                ORDER BY t.updated_at DESC
+                  AND e.event_type = 'status_changed' AND e.payload = 'done'
+                GROUP BY t.id, t.estimated_minutes, t.created_at
+                ORDER BY completed_at DESC
                 LIMIT 100
                 """,
                 (user_id,),
             )
             completed_events = cur.fetchall()
+            actual_focus_by_task: dict[int, int] = defaultdict(int)
+            for session in self.store.get_focus_sessions(user_id=user_id):
+                if session.get("actual_seconds") is None or session.get("task_id") is None:
+                    continue
+                actual_focus_by_task[session["task_id"]] += int(session["actual_seconds"])
 
-            if completed_events:
-                completion_times = []
-                estimation_errors = []
-                for ev in completed_events:
-                    try:
-                        created = datetime.fromisoformat(ev["created_at"])
-                        updated = datetime.fromisoformat(ev["updated_at"])
-                        if created.tzinfo is None:
-                            created = created.replace(tzinfo=timezone.utc)
-                        if updated.tzinfo is None:
-                            updated = updated.replace(tzinfo=timezone.utc)
-                        hours = (updated - created).total_seconds() / 3600
-                        completion_times.append(hours)
+            completion_times = []
+            estimation_ratios = []
+            estimation_accuracies = []
+            actual_task_minutes = []
+            completion_hours = Counter()
+            for ev in completed_events:
+                try:
+                    created = datetime.fromisoformat(str(ev["created_at"]).replace("Z", "+00:00"))
+                    completed = datetime.fromisoformat(str(ev["completed_at"]).replace("Z", "+00:00"))
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    if completed.tzinfo is None:
+                        completed = completed.replace(tzinfo=timezone.utc)
+                    cycle_hours = (completed - created).total_seconds() / 3600
+                    if cycle_hours >= 0:
+                        completion_times.append(cycle_hours)
+                    completion_hours[completed.hour] += 1
+                except (ValueError, TypeError):
+                    continue
 
-                        if ev["estimated_minutes"]:
-                            estimated_hours = ev["estimated_minutes"] / 60
-                            if estimated_hours > 0:
-                                error = hours / estimated_hours
-                                estimation_errors.append(error)
-                    except (ValueError, TypeError):
-                        continue
+                actual_seconds = actual_focus_by_task.get(ev["id"], 0)
+                if actual_seconds <= 0:
+                    continue
+                actual_minutes = actual_seconds / 60
+                actual_task_minutes.append(actual_minutes)
+                estimate = ev["estimated_minutes"]
+                if estimate and estimate > 0:
+                    ratio = actual_seconds / (estimate * 60)
+                    estimation_ratios.append(ratio)
+                    estimation_accuracies.append(max(0.0, 1.0 - min(abs(1.0 - ratio), 1.0)))
 
-                if completion_times:
-                    profile.avg_completion_hours = sum(completion_times) / len(completion_times)
-
-                if estimation_errors:
-                    profile.estimation_accuracy = 1.0 - min(
-                        abs(1.0 - sum(estimation_errors) / len(estimation_errors)), 1.0
-                    )
-                    profile.underestimation_ratio = sum(estimation_errors) / len(estimation_errors)
-
-            # ── 完成时段分析 ──────────────────────────────────
-            if completed_events:
-                hour_counter = Counter()
-                for ev in completed_events:
-                    try:
-                        updated = datetime.fromisoformat(ev["updated_at"])
-                        hour_counter[updated.hour] += 1
-                    except (ValueError, TypeError):
-                        continue
-                if hour_counter:
-                    profile.peak_completion_hour = hour_counter.most_common(1)[0][0]
-
-            # ── 偏好任务时长 ──────────────────────────────────
-            if completed_events:
-                durations = []
-                for ev in completed_events:
-                    if ev["estimated_minutes"]:
-                        durations.append(ev["estimated_minutes"])
-                if durations:
-                    buckets = Counter()
-                    for d in durations:
-                        if d <= 15:
-                            buckets["quick"] += 1
-                        elif d <= 30:
-                            buckets["short"] += 1
-                        elif d <= 60:
-                            buckets["medium"] += 1
-                        else:
-                            buckets["long"] += 1
-                    most_common = buckets.most_common(1)[0][0]
-                    profile.preferred_task_duration = {
-                        "quick": 15, "short": 30, "medium": 60, "long": 90
-                    }[most_common]
+            if completion_times:
+                profile.avg_completion_hours = sum(completion_times) / len(completion_times)
+            if completion_hours:
+                profile.peak_completion_hour = completion_hours.most_common(1)[0][0]
+            if actual_task_minutes:
+                profile.focus_tracked_tasks = len(actual_task_minutes)
+                profile.avg_actual_focus_minutes = sum(actual_task_minutes) / len(actual_task_minutes)
+                buckets = Counter()
+                for minutes in actual_task_minutes:
+                    if minutes <= 15:
+                        buckets["quick"] += 1
+                    elif minutes <= 30:
+                        buckets["short"] += 1
+                    elif minutes <= 60:
+                        buckets["medium"] += 1
+                    else:
+                        buckets["long"] += 1
+                most_common = buckets.most_common(1)[0][0]
+                profile.preferred_task_duration = {
+                    "quick": 15, "short": 30, "medium": 60, "long": 90
+                }[most_common]
+            if estimation_ratios:
+                profile.estimated_focus_tasks = len(estimation_ratios)
+                profile.estimation_accuracy = sum(estimation_accuracies) / len(estimation_accuracies)
+                profile.underestimation_ratio = sum(estimation_ratios) / len(estimation_ratios)
 
             # ── 拖延类型分析 ──────────────────────────────────
             cur.execute(
@@ -245,12 +285,14 @@ class InsightsEngine:
             profile.procrastination_types = [r["title"] for r in postponed_tasks]
 
             # ── 每日产出模式 ──────────────────────────────────
-            date_col = self._date_expr("updated_at")
+            date_col = self._date_expr("e.created_at")
             cur.execute(
                 f"""
                 SELECT {date_col} as day, COUNT(*) as cnt
-                FROM tasks
-                WHERE user_id = {self._ph()} AND status = 'done'
+                FROM task_events e
+                JOIN tasks t ON e.task_id = t.id
+                WHERE t.user_id = {self._ph()}
+                  AND e.event_type = 'status_changed' AND e.payload = 'done'
                 GROUP BY day
                 ORDER BY cnt DESC
                 LIMIT 7
@@ -298,8 +340,11 @@ class InsightsEngine:
             # ── 倦怠风险 ──────────────────────────────────────
             cur.execute(
                 f"""
-                SELECT COUNT(*) as cnt FROM tasks
-                WHERE user_id = {self._ph()} AND status = 'done' AND updated_at > {self._ph()}
+                SELECT COUNT(*) as cnt FROM task_events e
+                JOIN tasks t ON e.task_id = t.id
+                WHERE t.user_id = {self._ph()}
+                  AND e.event_type = 'status_changed' AND e.payload = 'done'
+                  AND e.created_at > {self._ph()}
                 """,
                 (user_id, (now - timedelta(days=7)).isoformat()),
             )
@@ -307,8 +352,11 @@ class InsightsEngine:
 
             cur.execute(
                 f"""
-                SELECT COUNT(*) as cnt FROM tasks
-                WHERE user_id = {self._ph()} AND status = 'done' AND updated_at > {self._ph()} AND updated_at <= {self._ph()}
+                SELECT COUNT(*) as cnt FROM task_events e
+                JOIN tasks t ON e.task_id = t.id
+                WHERE t.user_id = {self._ph()}
+                  AND e.event_type = 'status_changed' AND e.payload = 'done'
+                  AND e.created_at > {self._ph()} AND e.created_at <= {self._ph()}
                 """,
                 (user_id, (now - timedelta(days=14)).isoformat(), (now - timedelta(days=7)).isoformat()),
             )
@@ -326,13 +374,16 @@ class InsightsEngine:
 
     def _calc_consistency(self, conn: Any, user_id: str) -> float:
         """计算每日完成任务的一致性。"""
-        date_col = self._date_expr("updated_at")
+        date_col = self._date_expr("e.created_at")
         cur = conn.cursor()
         cur.execute(
             f"""
             SELECT {date_col} as day, COUNT(*) as cnt
-            FROM tasks
-            WHERE user_id = {self._ph()} AND status = 'done' AND updated_at > {self._now_minus_days(14)}
+            FROM task_events e
+            JOIN tasks t ON e.task_id = t.id
+            WHERE t.user_id = {self._ph()}
+              AND e.event_type = 'status_changed' AND e.payload = 'done'
+              AND e.created_at > {self._now_minus_days(14)}
             GROUP BY day
             """,
             (user_id,),
@@ -484,14 +535,16 @@ class InsightsEngine:
 
     def get_weekly_pattern(self, user_id: str = "default") -> dict:
         """分析每周产出模式。"""
-        dow_col = self._dow_expr("updated_at")
+        dow_col = self._dow_expr("e.created_at")
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute(
                 f"""
                 SELECT {dow_col} as weekday, COUNT(*) as cnt
-                FROM tasks
-                WHERE user_id = {self._ph()} AND status = 'done'
+                FROM task_events e
+                JOIN tasks t ON e.task_id = t.id
+                WHERE t.user_id = {self._ph()}
+                  AND e.event_type = 'status_changed' AND e.payload = 'done'
                 GROUP BY weekday
                 ORDER BY cnt DESC
                 """,
@@ -553,14 +606,17 @@ class InsightsEngine:
 
     def get_consistency_score(self, user_id: str = "default") -> float:
         """计算一致性得分（0-1，基于每日完成任务的稳定性）。"""
-        date_col = self._date_expr("updated_at")
+        date_col = self._date_expr("e.created_at")
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute(
                 f"""
                 SELECT {date_col} as day, COUNT(*) as cnt
-                FROM tasks
-                WHERE user_id = {self._ph()} AND status = 'done' AND updated_at > {self._now_minus_days(14)}
+                FROM task_events e
+                JOIN tasks t ON e.task_id = t.id
+                WHERE t.user_id = {self._ph()}
+                  AND e.event_type = 'status_changed' AND e.payload = 'done'
+                  AND e.created_at > {self._now_minus_days(14)}
                 GROUP BY day
                 """,
                 (user_id,),

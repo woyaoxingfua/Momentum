@@ -19,7 +19,8 @@ mysql = [
     "pymysql>=1.1",
 ]
 mcp = [
-    "mcp>=1.28",
+    # The low-level Server API used here is the MCP SDK 1.x API.
+    "mcp>=1.28,<2",
     "uvicorn>=0.31",
     "starlette>=0.37",
 ]

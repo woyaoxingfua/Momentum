@@ -21,6 +21,12 @@
     .stat-card .value.success { color: var(--success); }
     .stat-card .value.danger { color: var(--danger); }
     .stat-card p { font-size: 12px; color: var(--text-3); margin-top: var(--space-2); }
+    .daily-load-card { color: inherit; }
+    .daily-load-card:hover { border-color: var(--accent); }
+    .daily-load-primary-link { display: block; color: inherit; text-decoration: none; }
+    .daily-load-primary-link:focus-visible, .daily-unestimated-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .daily-load-link-hint { color: var(--accent) !important; }
+    .daily-unestimated-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
     .charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-4); margin-bottom: var(--space-4); }
     .chart-card { background: var(--surface); border: 1px solid var(--border); padding: var(--space-5); min-height: 320px; }
     .chart-card h3 { font-size: 13px; color: var(--text); margin-bottom: var(--space-4); font-family: var(--font-serif); }
@@ -28,16 +34,26 @@
     .full-width { grid-column: 1 / -1; }
     .insights-list { display: flex; flex-direction: column; gap: var(--space-2); }
     .insight-item { background: var(--bg-2); border-left: 3px solid var(--accent); padding: var(--space-3) var(--space-4); font-size: 13px; color: var(--text-2); }
+    .future-due-card { grid-column: 1 / -1; }
+    .future-due-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-3); }
+    .future-due-day { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--bg-2); border: 1px solid var(--border); }
+    .future-due-day:hover { border-color: var(--accent); }
+    .future-due-link { display: flex; flex: 1; flex-direction: column; gap: var(--space-2); min-width: 0; color: inherit; text-decoration: none; }
+    .future-due-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .future-due-date { color: var(--text); font-family: var(--font-mono); font-size: 12px; }
+    .future-due-totals { color: var(--text-2); font-size: 12px; line-height: 1.5; }
     .back-link { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-3); font-size: 13px; }
     .back-link:hover { color: var(--accent); }
     @media (max-width: 960px) {
       .stats-shell { padding: var(--space-5); }
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
       .charts-grid { grid-template-columns: 1fr; }
+      .future-due-days { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     }
     @media (max-width: 600px) {
       .stats-grid { grid-template-columns: 1fr; }
       .stat-card .value { font-size: 28px; }
+      .future-due-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -63,19 +79,43 @@
         <p id="completionDetail">完成 / 创建</p>
       </div>
       <div class="stat-card">
-        <h3>平均完成耗时</h3>
+        <h3>平均完成周期</h3>
         <div class="value" id="avgHours">--</div>
-        <p>小时 / 任务</p>
+        <p>创建到完成事件（小时 / 任务）</p>
       </div>
       <div class="stat-card">
-        <h3>预估准确率</h3>
+        <h3>平均实际专注</h3>
+        <div class="value" id="avgFocusMinutes">--</div>
+        <p id="focusTrackedDetail">按有实际记录的完成任务计算</p>
+      </div>
+      <div class="stat-card">
+        <h3>已完成任务实际专注与估算的接近度</h3>
         <div class="value success" id="estimationAccuracy">--</div>
-        <p>1 = 完美预估</p>
+        <p id="estimationDetail">需要任务预估和实际专注记录</p>
       </div>
       <div class="stat-card">
         <h3>高效时段</h3>
         <div class="value accent" id="peakHour">--</div>
         <p>最常完成任务的时段</p>
+      </div>
+      <div class="stat-card daily-load-card">
+        <h3>今日计划负载</h3>
+        <a class="daily-load-primary-link" id="dailyLoadLink" href="/" aria-label="查看今天到期的待办与进行中任务，不含逾期">
+          <div class="value" id="dailyLoadMinutes">--</div>
+          <p>已估计划分钟 / 容量分钟</p>
+          <p id="dailyLoadDifference">加载中...</p>
+          <p id="dailyLoadRatio">容量占比：--</p>
+          <p class="daily-load-link-hint">查看今天到期的待办与进行中任务（不含逾期）→</p>
+        </a>
+        <p id="dailyUnestimatedCount">未估时任务（本地逾期+今天）：<a class="daily-unestimated-link" id="dailyUnestimatedLink" href="/?unestimated_due_by_today=1" aria-label="查看本地逾期及今天到期的未估时开放任务">--</a></p>
+        <p id="dailyLoadNote">仅统计本地今日及逾期、仍开放任务的计划估时；不代表实际专注时长。</p>
+        <p id="dailyLoadStatus" role="status" aria-live="polite">正在读取配置和开放任务...</p>
+      </div>
+      <div class="stat-card future-due-card">
+        <h3>未来 7 天截止日估时分布</h3>
+        <p>按浏览器本地截止日期汇总 todo / doing 开放任务：展示正估时分钟合计与未估时任务数；不含今日、逾期或无截止日任务。这是截止日期分布，不是排程，也不代表实际专注。点击任一日期查看当天开放任务。</p>
+        <div class="future-due-days" id="futureDueDays" role="list" aria-label="未来七天每日截止任务估时"></div>
+        <p id="futureDueStatus" role="status" aria-live="polite">正在读取配置和开放任务...</p>
       </div>
     </section>
 

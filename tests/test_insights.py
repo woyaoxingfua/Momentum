@@ -144,3 +144,159 @@ class TestInsightDataclass:
         )
         assert insight.category == "risk"
         assert insight.actionable is True
+
+
+class TestEvidenceBasedTimeInsights:
+    def test_uses_done_event_and_actual_focus_not_later_task_update(self, store, engine):
+        task = store.create_task("有计时记录的任务", estimated_minutes=20)
+        store.update_status(task.id, TaskStatus.DONE)
+
+        now = datetime.now(timezone.utc)
+        created_at = now - timedelta(hours=7)
+        completed_at = now - timedelta(hours=2)
+        later_update_at = now - timedelta(hours=1)
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE tasks SET created_at = ?, updated_at = ? WHERE id = ?",
+                (created_at.isoformat(), later_update_at.isoformat(), task.id),
+            )
+            conn.execute(
+                "UPDATE task_events SET created_at = ? WHERE task_id = ? AND event_type = 'status_changed' AND payload = 'done'",
+                (completed_at.isoformat(), task.id),
+            )
+
+        store.record_focus_session(
+            task.id,
+            30,
+            actual_seconds=30 * 60,
+            planned_minutes=30,
+            started_at=completed_at - timedelta(minutes=50),
+            ended_at=completed_at,
+            outcome="completed",
+            session_id="d" * 32,
+        )
+
+        profile = engine.build_profile()
+        assert profile.avg_completion_hours == pytest.approx(5.0)
+        assert profile.peak_completion_hour == completed_at.hour
+        assert profile.avg_actual_focus_minutes == pytest.approx(30.0)
+        assert profile.focus_tracked_tasks == 1
+        assert profile.estimated_focus_tasks == 1
+        assert profile.underestimation_ratio == pytest.approx(1.5)
+        assert profile.estimation_accuracy == pytest.approx(0.5)
+        assert engine.get_completion_events()[0]["completed_at"] == completed_at
+
+    def test_legacy_planned_minutes_do_not_claim_actual_time_or_accuracy(self, store, engine):
+        task = store.create_task("旧专注记录", estimated_minutes=25)
+        store.update_status(task.id, TaskStatus.DONE)
+        store.record_focus_session(task.id, 25)
+
+        profile = engine.build_profile()
+        session = store.get_focus_sessions()[0]
+
+        assert session["duration_minutes"] == 25
+        assert session["actual_seconds"] is None
+        assert profile.avg_actual_focus_minutes == 0
+        assert profile.focus_tracked_tasks == 0
+        assert profile.estimated_focus_tasks == 0
+        assert profile.estimation_accuracy == 0
+        assert profile.underestimation_ratio == 0
+
+    def test_focus_window_uses_event_created_at_and_only_latest_100_done_tasks(
+        self, store, engine
+    ):
+        tasks = []
+        for index in range(101):
+            estimate = 0 if index == 3 else 2
+            task = store.create_task(f"完成任务{index}", estimated_minutes=estimate)
+            store.update_status(task.id, TaskStatus.DONE)
+            tasks.append(task)
+
+        now = datetime.now(timezone.utc)
+        with store._connect() as conn:
+            for index, task in enumerate(tasks):
+                completed_at = now - timedelta(seconds=101 - index)
+                conn.execute(
+                    "UPDATE tasks SET created_at = ?, updated_at = ? WHERE id = ?",
+                    (
+                        (completed_at - timedelta(hours=1)).isoformat(),
+                        completed_at.isoformat(),
+                        task.id,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE task_events SET created_at = ? "
+                    "WHERE task_id = ? AND event_type = 'status_changed' AND payload = 'done'",
+                    (completed_at.isoformat(), task.id),
+                )
+
+        for index, task in enumerate(tasks[:-1]):
+            started_at = now - timedelta(days=40 if index == 1 else 1)
+            store.record_focus_session(
+                task.id,
+                1,
+                actual_seconds=60,
+                planned_minutes=1,
+                started_at=started_at,
+                ended_at=started_at + timedelta(minutes=1),
+                outcome="completed",
+                session_id=f"{index + 1:032x}",
+            )
+
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE task_events SET created_at = ? "
+                "WHERE task_id = ? AND event_type = 'focus_session'",
+                ((now - timedelta(days=1)).isoformat(), tasks[1].id),
+            )
+            conn.execute(
+                "UPDATE task_events SET created_at = ? "
+                "WHERE task_id = ? AND event_type = 'focus_session'",
+                ((now - timedelta(days=31)).isoformat(), tasks[2].id),
+            )
+
+        profile = engine.build_profile()
+
+        # The latest 100 excludes task 0 (even though it has focus); task 100
+        # is included but intentionally has no focus event.
+        # Task 1's event is in-window despite old session timestamps; task 2's
+        # event is out-of-window despite in-window session timestamps.
+        assert profile.focus_tracked_tasks == 98
+        assert profile.avg_actual_focus_minutes == pytest.approx(1.0)
+        assert profile.estimated_focus_tasks == 97
+        assert profile.underestimation_ratio == pytest.approx(0.5)
+        assert profile.estimation_accuracy == pytest.approx(0.5)
+
+    def test_accuracy_recalculates_from_current_estimate_after_done_task_update(
+        self, store, engine
+    ):
+        task = store.create_task("事后修改预估的已完成任务", estimated_minutes=20)
+        store.update_status(task.id, TaskStatus.DONE)
+
+        now = datetime.now(timezone.utc)
+        store.record_focus_session(
+            task.id,
+            30,
+            actual_seconds=30 * 60,
+            planned_minutes=30,
+            started_at=now - timedelta(minutes=50),
+            ended_at=now,
+            outcome="completed",
+            session_id="e" * 32,
+        )
+
+        before = engine.build_profile()
+        assert before.avg_actual_focus_minutes == pytest.approx(30.0)
+        assert before.focus_tracked_tasks == 1
+        assert before.estimated_focus_tasks == 1
+        assert before.underestimation_ratio == pytest.approx(1.5)
+        assert before.estimation_accuracy == pytest.approx(0.5)
+
+        store.update_task(task.id, estimated_minutes=30)
+
+        after = engine.build_profile()
+        assert after.avg_actual_focus_minutes == pytest.approx(30.0)
+        assert after.focus_tracked_tasks == 1
+        assert after.estimated_focus_tasks == 1
+        assert after.underestimation_ratio == pytest.approx(1.0)
+        assert after.estimation_accuracy == pytest.approx(1.0)

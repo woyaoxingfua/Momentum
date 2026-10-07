@@ -70,7 +70,22 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
-function renderMarkdown(text) {
+const SAFE_MARKDOWN_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+/**
+ * 只允许 http/https/mailto/tel 以及站内相对地址，阻断 javascript:/data: 等可执行 scheme。
+ * 空字符串表示不安全（调用方应退化为纯文本）。
+ */
+export function sanitizeMarkdownUrl(raw) {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  // 浏览器解析 URL 时会忽略控制字符（\t \n \r 等），"jav\tascript:" 这类写法能绕过 scheme 检查
+  if (/[\u0000-\u001F\u007F]/.test(value)) return "";
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(value);
+  if (!scheme) return value; // 站内相对地址（/path、#hash、?query）
+  return SAFE_MARKDOWN_SCHEMES.has(scheme[1].toLowerCase() + ":") ? value : "";
+}
+export function renderMarkdown(text) {
   if (!text) return "";
 
   // 保护未闭合的 markdown 标签 - 使用占位符
@@ -128,9 +143,15 @@ function renderMarkdown(text) {
   // ordered lists
   result = result.replace(/^[\s]*\d+\. (.+)$/gm, "<li>$1</li>");
 
-  // links and images
-  result = result.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" />');
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a target="_blank" href="$2">$1</a>');
+  // links and images（先做 scheme 白名单，再输出）
+  result = result.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
+    const safe = sanitizeMarkdownUrl(src);
+    return safe ? `<img alt="${alt}" src="${safe}" />` : `<span>${alt}</span>`;
+  });
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, href) => {
+    const safe = sanitizeMarkdownUrl(href);
+    return safe ? `<a target="_blank" rel="noopener noreferrer" href="${safe}">${label}</a>` : `<span>${label}</span>`;
+  });
 
   // blockquote
   result = result.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");

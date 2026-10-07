@@ -2,18 +2,23 @@
 
 复用 agents/tools 下的全部 function_tool 定义，零重复代码。
 
-两种传输方式：
+传输方式：
   - stdio（默认）：本地进程，供 Claude Desktop / Cursor / 命令行 Agent 调用
-  - sse：HTTP + SSE，供远程 / 网络 Agent 调用（可选 API Key 鉴权）
+  - streamable-http（推荐）：MCP Streamable HTTP，endpoint 为 /mcp
+  - sse（兼容旧客户端）：旧式 HTTP + SSE，endpoint 为 /sse
 
 用法：
   momentum-agent mcp                          # stdio 模式
+  momentum-agent mcp --transport streamable-http  # 默认 loopback；远程 host 需要 API Key
   momentum-agent mcp --transport sse         # SSE 模式，默认 127.0.0.1:8766
+  export MOMENTUM_MCP_API_KEY='...'
   momentum-agent mcp --transport sse --host 0.0.0.0 --port 9000
 """
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import hmac
 import json
 import os
 from typing import Any
@@ -180,12 +185,162 @@ async def run_stdio(database_url: str, user_id: str = DEFAULT_USER_ID) -> None:
         await server.run(read_stream, write_stream, init_opts)
 
 
-def _check_api_key(api_key: str | None) -> bool:
-    """读取环境变量中的 API Key，与传入的对比。"""
-    expected = os.environ.get("MOMENTUM_MCP_API_KEY")
-    if not expected:
-        return True  # 未配置则不鉴权
-    return bool(api_key) and api_key == expected
+def _normalize_api_key(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
+def _configured_api_key() -> str | None:
+    return _normalize_api_key(os.environ.get("MOMENTUM_MCP_API_KEY"))
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = str(host or "").strip().lower()
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    if normalized.rstrip(".") == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_mcp_transport_security(transport: str, host: str) -> None:
+    """Reject remote HTTP transports unless a non-empty Bearer key is configured."""
+    supported = {"stdio", "streamable-http", "sse"}
+    if transport not in supported:
+        raise ValueError(f"不支持的传输方式：{transport}（可选：stdio, streamable-http, sse）")
+    if transport == "stdio" or _is_loopback_host(host) or _configured_api_key():
+        return
+    raise ValueError(
+        f"拒绝启动：MCP {transport} 绑定非 loopback 主机时必须配置 Bearer API Key。"
+        "请设置环境变量 MOMENTUM_MCP_API_KEY；若仅本机使用，请绑定 127.0.0.1、::1 或 localhost。"
+    )
+
+
+def _check_api_key(api_key: str | None, *, expected: str | None = None) -> bool:
+    """Compare Bearer tokens in constant time; no-key mode is for local use only."""
+    expected = _normalize_api_key(expected) or _configured_api_key()
+    if expected is None:
+        return True
+    return bool(api_key) and hmac.compare_digest(
+        api_key.encode("utf-8"), expected.encode("utf-8")
+    )
+
+
+def _bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.casefold() != "bearer":
+        return None
+    return token.strip() or None
+
+
+def _scope_headers(scope) -> dict[str, str]:
+    return {
+        key.decode("latin-1").casefold(): value.decode("latin-1")
+        for key, value in scope.get("headers", [])
+    }
+
+
+def create_streamable_http_app(server, *, api_key: str | None = None):
+    """创建 MCP Streamable HTTP ASGI app（/mcp），兼容 mcp SDK 1.x。"""
+    from contextlib import asynccontextmanager
+
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+
+    expected_api_key = _normalize_api_key(api_key) or _configured_api_key()
+    session_manager = StreamableHTTPSessionManager(app=server)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        async with session_manager.run():
+            yield
+
+    starlette_app = Starlette(debug=False, lifespan=lifespan)
+
+    async def app(scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path", "").rstrip("/") == "/mcp":
+            if expected_api_key:
+                authorization = _scope_headers(scope).get("authorization")
+                token = _bearer_token(authorization)
+                if not _check_api_key(token, expected=expected_api_key):
+                    response = JSONResponse({"error": "无效或缺失的 API Key"}, status_code=401)
+                    await response(scope, receive, send)
+                    return
+            await session_manager.handle_request(scope, receive, send)
+            return
+        await starlette_app(scope, receive, send)
+
+    return app
+
+
+async def run_streamable_http(
+    database_url: str,
+    user_id: str = DEFAULT_USER_ID,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8766,
+) -> None:
+    """推荐的 Streamable HTTP 传输，端点为 ``/mcp``。"""
+    validate_mcp_transport_security("streamable-http", host)
+    import uvicorn
+
+    store = create_task_store(database_url)
+    server = create_mcp_server(store, user_id)
+    api_key = _configured_api_key()
+    app = create_streamable_http_app(server, api_key=api_key)
+    require_auth = bool(api_key)
+    log.info(
+        "starting MCP Streamable HTTP server: http://%s:%s/mcp user=%r auth=%s",
+        host, port, user_id, require_auth,
+    )
+    config = uvicorn.Config(app, host=host, port=port, log_level="info", access_log=False)
+    await uvicorn.Server(config).serve()
+
+
+def create_sse_app(server, *, api_key: str | None = None):
+    """Create the legacy SSE app with identical Bearer checks on connect and messages."""
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, Response
+    from starlette.routing import Mount, Route
+
+    expected_api_key = _normalize_api_key(api_key) or _configured_api_key()
+    init_opts = server.create_initialization_options()
+    sse_transport = SseServerTransport("/messages/")
+
+    async def handle_sse(request: Request) -> Response:
+        if expected_api_key:
+            token = _bearer_token(request.headers.get("authorization"))
+            if not _check_api_key(token, expected=expected_api_key):
+                return JSONResponse({"error": "无效或缺失的 API Key"}, status_code=401)
+        async with sse_transport.connect_sse(request.scope, request.receive, request._send) as (read, write):
+            await server.run(read, write, init_opts)
+        return Response()
+
+    async def handle_sse_message(scope, receive, send):
+        if expected_api_key:
+            token = _bearer_token(_scope_headers(scope).get("authorization"))
+            if not _check_api_key(token, expected=expected_api_key):
+                response = JSONResponse({"error": "无效或缺失的 API Key"}, status_code=401)
+                await response(scope, receive, send)
+                return
+        await sse_transport.handle_post_message(scope, receive, send)
+
+    return Starlette(
+        debug=False,
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=handle_sse_message),
+        ],
+    )
 
 
 async def run_sse(
@@ -195,39 +350,16 @@ async def run_sse(
     host: str = "127.0.0.1",
     port: int = 8766,
 ) -> None:
-    """SSE 传输 — 远程 HTTP 接入，可选 API Key 鉴权（MOMENTUM_MCP_API_KEY）。"""
-    from mcp.server.sse import SseServerTransport
-    from starlette.applications import Starlette
-    from starlette.requests import Request
-    from starlette.responses import JSONResponse, Response
-    from starlette.routing import Mount, Route
+    """SSE 传输 — 非 loopback 接入必须配置 MOMENTUM_MCP_API_KEY。"""
+    validate_mcp_transport_security("sse", host)
     import uvicorn
 
     store = create_task_store(database_url)
     server = create_mcp_server(store, user_id)
-    init_opts = server.create_initialization_options()
-    sse_transport = SseServerTransport("/messages/")
+    api_key = _configured_api_key()
+    app = create_sse_app(server, api_key=api_key)
 
-    require_auth = bool(os.environ.get("MOMENTUM_MCP_API_KEY"))
-
-    async def handle_sse(request: Request) -> Response:
-        if require_auth:
-            token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            if not _check_api_key(token):
-                return JSONResponse({"error": "无效或缺失的 API Key"}, status_code=401)
-        async with sse_transport.connect_sse(request.scope, request.receive, request._send) as (read, write):
-            await server.run(read, write, init_opts)
-        return Response()
-
-    app = Starlette(
-        debug=False,
-        routes=[
-            Route("/sse", endpoint=handle_sse),
-            Mount("/messages/", app=sse_transport.handle_post_message),
-        ],
-    )
-
-    log.info("starting MCP SSE server: http://%s:%s/sse user=%r auth=%s", host, port, user_id, require_auth)
+    log.info("starting legacy MCP SSE server: http://%s:%s/sse user=%r auth=%s", host, port, user_id, bool(api_key))
     config = uvicorn.Config(app, host=host, port=port, log_level="info", access_log=False)
     http_server = uvicorn.Server(config)
     await http_server.serve()
@@ -250,23 +382,30 @@ def run_mcp_server(
 
     Args:
         database_url: 数据库 URL
-        transport: 传输方式 "stdio" 或 "sse"
+        transport: "stdio"、"streamable-http"（推荐）或兼容旧客户端的 "sse"
         user_id: 操作的目标用户
-        host: SSE 模式监听地址
+        host: HTTP 模式监听地址；非 loopback 必须配置 Bearer API Key
         port: SSE 模式监听端口
     """
+    validate_mcp_transport_security(transport, host)
     if transport == "stdio":
         asyncio.run(run_stdio(database_url, user_id))
+    elif transport == "streamable-http":
+        asyncio.run(run_streamable_http(database_url, user_id, host=host, port=port))
     elif transport == "sse":
         asyncio.run(run_sse(database_url, user_id, host=host, port=port))
     else:
-        raise ValueError(f"不支持的传输方式：{transport}（可选：stdio, sse）")
+        raise ValueError(f"不支持的传输方式：{transport}（可选：stdio, streamable-http, sse）")
 
 
 __all__ = [
     "build_all_tools",
     "create_mcp_server",
+    "create_sse_app",
+    "create_streamable_http_app",
     "run_stdio",
+    "run_streamable_http",
     "run_sse",
     "run_mcp_server",
+    "validate_mcp_transport_security",
 ]

@@ -1,0 +1,154 @@
+{
+  "scope": "same browser, same Chromium context, same http://127.0.0.1 origin only",
+  "browser_context": "fresh non-persistent Chromium context; service workers blocked",
+  "network": {
+    "allowlist": "only exact test loopback origin",
+    "blocked_external_request_count": 0
+  },
+  "viewports": {
+    "desktop": {
+      "width": 1440,
+      "height": 1000
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844
+    }
+  },
+  "tabs": {
+    "A": {
+      "role": "Web Lock winner/session owner",
+      "start_request_count": 1,
+      "finish_request_count": 1,
+      "session_id": "4ad6a39200c6433c9d2fc4011f8df966",
+      "task_id": 1,
+      "active_state": {
+        "running_visible": true,
+        "start_disabled": true,
+        "all_start_entries_disabled": true
+      },
+      "ended_state": "idle after stop; remained idle after reload"
+    },
+    "B": {
+      "role": "contender/read-only mirror",
+      "start_request_count": 0,
+      "finish_request_count": 0,
+      "session_id": "4ad6a39200c6433c9d2fc4011f8df966",
+      "task_id": 1,
+      "active_state": {
+        "running_visible": true,
+        "start_disabled": true,
+        "pause_disabled": true,
+        "stop_disabled": true,
+        "all_start_entries_disabled": true,
+        "entry_button_count": 4
+      },
+      "ended_state": "idle after owner's stop; remained idle after reload"
+    }
+  },
+  "race": {
+    "A_response_held_ms": 900,
+    "B_clicked_while_A_request_pending": true,
+    "winner_session_task_match": true,
+    "B_extra_start_click_attempted": true,
+    "B_extra_start_requests": 0
+  },
+  "finish": {
+    "request_count": 1,
+    "session_id_matches_start": true,
+    "task_id_matches_start": true,
+    "outcome": "stopped",
+    "reload_added_finish_requests": false
+  },
+  "database": {
+    "focus_session_event_count": 1,
+    "event_count_for_session": 1,
+    "task_due_at_before": {
+      "1": "2030-01-02T09:00:00+00:00",
+      "2": "2030-01-02T09:00:00+00:00"
+    },
+    "task_due_at_after": {
+      "1": "2030-01-02T09:00:00+00:00",
+      "2": "2030-01-02T09:00:00+00:00"
+    },
+    "due_at_unchanged": true,
+    "task_status_unchanged": true
+  },
+  "start_responses": {
+    "A": [
+      {
+        "session_id": "4ad6a39200c6433c9d2fc4011f8df966",
+        "task_id": 1,
+        "started_at": "2026-10-04T07:37:34.433311+00:00"
+      }
+    ],
+    "B": []
+  },
+  "finish_payloads": {
+    "A": [
+      {
+        "task_id": 1,
+        "session_id": "4ad6a39200c6433c9d2fc4011f8df966",
+        "started_at": "2026-10-04T07:37:34.433311+00:00",
+        "planned_minutes": 25,
+        "actual_seconds": 2,
+        "outcome": "stopped",
+        "ended_at": "2026-10-04T07:37:37.909Z"
+      }
+    ],
+    "B": []
+  },
+  "state_before_end": {
+    "A": {
+      "runningVisible": true,
+      "idleVisible": false,
+      "recoveryVisible": false,
+      "currentTaskText": "Focus test task",
+      "mainStartDisabled": true,
+      "pauseDisabled": false,
+      "stopDisabled": false,
+      "allEntryButtonsDisabled": true,
+      "entryButtonCount": 4,
+      "sessionId": "4ad6a39200c6433c9d2fc4011f8df966",
+      "taskId": 1,
+      "snapshotPresent": true,
+      "width": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440
+      }
+    },
+    "B": {
+      "runningVisible": true,
+      "idleVisible": false,
+      "recoveryVisible": false,
+      "currentTaskText": "Focus test task（另一标签页正在专注）",
+      "mainStartDisabled": true,
+      "pauseDisabled": true,
+      "stopDisabled": true,
+      "allEntryButtonsDisabled": true,
+      "entryButtonCount": 4,
+      "sessionId": "4ad6a39200c6433c9d2fc4011f8df966",
+      "taskId": 1,
+      "snapshotPresent": true,
+      "width": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390
+      }
+    }
+  },
+  "environment": {
+    "database": "fresh temporary SQLite, deleted at exit",
+    "one_off_user": "credentials and auth token omitted",
+    "provider_environment": "not inherited by server/browser",
+    "dotenv": "PYTHON_DOTENV_DISABLED=1; server cwd isolated under temporary directory",
+    "server_logs": "disabled and redirected to DEVNULL",
+    "server_port": "random loopback ephemeral port; not 8765",
+    "temporary_service": "terminated at exit"
+  },
+  "artifacts": {
+    "desktop_screenshot": "/workspace/Momentum-review/repo/tests/frontend/artifacts/focus-multitab-20261004-073727-3604-desktop.png",
+    "mobile_screenshot": "/workspace/Momentum-review/repo/tests/frontend/artifacts/focus-multitab-20261004-073727-3604-mobile.png"
+  }
+}

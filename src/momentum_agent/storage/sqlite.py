@@ -80,6 +80,37 @@ CREATE TABLE IF NOT EXISTS task_events (
     payload TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS task_postpone_idempotency (
+    user_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    response_status INTEGER NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS task_done_idempotency (
+    user_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    response_status INTEGER NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS task_done_occurrences (
+    user_id TEXT NOT NULL,
+    source_task_id INTEGER NOT NULL,
+    source_done_event_id INTEGER NOT NULL,
+    next_task_id INTEGER,
+    response_status INTEGER NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (user_id, source_task_id, source_done_event_id)
+);
 """
 
 DEFAULT_USER = "default"
@@ -315,73 +346,132 @@ class SQLiteTaskStore:
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return row_to_task(row) if row else None
 
+    def get_task_for_user(self, task_id: int, user_id: str) -> Task | None:
+        """按 ID 和 owner 一次查询任务，不暴露其他用户的记录。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?",
+                (task_id, user_id),
+            ).fetchone()
+        return row_to_task(row) if row else None
+
     def update_status(
         self, task_id: int, status: TaskStatus, *, user_id: str | None = None
     ) -> Task | None:
         now = utcnow()
         log.info("update_status task=%d status=%s user=%r", task_id, status.value, user_id)
-        old_parent_id = None
-        has_subtasks = False
         with self._connect() as conn:
+            # Acquire the writer lock before reading the prior state, so two
+            # concurrent DONE requests cannot both append a completion event.
+            conn.execute("BEGIN IMMEDIATE")
             if user_id is not None:
-                old = conn.execute(
-                    "SELECT parent_task_id FROM tasks WHERE id = ? AND user_id = ?",
-                    (task_id, user_id),
+                row = conn.execute(
+                    "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
                 ).fetchone()
             else:
-                old = conn.execute("SELECT parent_task_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
-            if old:
-                old_parent_id = old["parent_task_id"]
-            if user_id is not None and old is None:
+                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
                 log.warning("update_status: task #%d not owned by %r", task_id, user_id)
                 return None
-            if user_id is not None:
+            if row["status"] != status.value:
+                if user_id is None:
+                    conn.execute(
+                        "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                        (status.value, encode_dt(now), task_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                        (status.value, encode_dt(now), task_id, user_id),
+                    )
                 conn.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-                    (status.value, encode_dt(now), task_id, user_id),
+                    "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                    (task_id, "status_changed", status.value, encode_dt(now)),
                 )
-            else:
-                conn.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-                    (status.value, encode_dt(now), task_id),
-                )
-            conn.execute(
-                "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
-                (task_id, "status_changed", status.value, encode_dt(now)),
-            )
-            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-            subtasks = conn.execute(
-                "SELECT id FROM tasks WHERE parent_task_id = ?", (task_id,)
-            ).fetchall()
-            has_subtasks = len(subtasks) > 0
-        task = row_to_task(row) if row else None
-        
-        if task and status == TaskStatus.DONE and has_subtasks:
-            self._complete_all_subtasks(task_id, user_id)
-        
-        if task and status == TaskStatus.DONE and old_parent_id:
-            self._auto_complete_parent(old_parent_id)
-        
-        return task
-    
-    def _complete_all_subtasks(self, parent_task_id: int, user_id: str | None) -> None:
-        log.info("auto-completing all subtasks for parent task #%d", parent_task_id)
-        now = utcnow()
-        with self._connect() as conn:
-            if user_id:
-                conn.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE parent_task_id = ? AND status != ? AND user_id = ?",
-                    (TaskStatus.DONE.value, encode_dt(now), parent_task_id, TaskStatus.DONE.value, user_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE parent_task_id = ? AND status != ?",
-                    (TaskStatus.DONE.value, encode_dt(now), parent_task_id, TaskStatus.DONE.value),
-                )
-            conn.execute(
-                "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
-                (parent_task_id, "subtasks_completed", None, encode_dt(now)),
-            )
+
+                if status == TaskStatus.DONE:
+                    queue = [task_id]
+                    while queue:
+                        completed_id = queue.pop(0)
+                        if user_id is None:
+                            completed = conn.execute(
+                                "SELECT parent_task_id FROM tasks WHERE id = ?", (completed_id,)
+                            ).fetchone()
+                            children = conn.execute(
+                                "SELECT id FROM tasks WHERE parent_task_id = ? AND status != ? ORDER BY id",
+                                (completed_id, TaskStatus.DONE.value),
+                            ).fetchall()
+                        else:
+                            completed = conn.execute(
+                                "SELECT parent_task_id FROM tasks WHERE id = ? AND user_id = ?",
+                                (completed_id, user_id),
+                            ).fetchone()
+                            children = conn.execute(
+                                "SELECT id FROM tasks WHERE parent_task_id = ? AND status != ? AND user_id = ? ORDER BY id",
+                                (completed_id, TaskStatus.DONE.value, user_id),
+                            ).fetchall()
+                        changed_children = 0
+                        for child in children:
+                            if user_id is None:
+                                result = conn.execute(
+                                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status != ?",
+                                    (TaskStatus.DONE.value, encode_dt(now), child["id"], TaskStatus.DONE.value),
+                                )
+                            else:
+                                result = conn.execute(
+                                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status != ? AND user_id = ?",
+                                    (TaskStatus.DONE.value, encode_dt(now), child["id"], TaskStatus.DONE.value, user_id),
+                                )
+                            if result.rowcount:
+                                changed_children += 1
+                                conn.execute(
+                                    "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                                    (child["id"], "status_changed", TaskStatus.DONE.value, encode_dt(now)),
+                                )
+                                queue.append(child["id"])
+                        if changed_children:
+                            conn.execute(
+                                "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                                (completed_id, "subtasks_completed", None, encode_dt(now)),
+                            )
+
+                        parent_id = completed["parent_task_id"] if completed else None
+                        if parent_id is None:
+                            continue
+                        if user_id is None:
+                            parent = conn.execute("SELECT status FROM tasks WHERE id = ?", (parent_id,)).fetchone()
+                            sibling_states = conn.execute(
+                                "SELECT status FROM tasks WHERE parent_task_id = ?", (parent_id,)
+                            ).fetchall()
+                        else:
+                            parent = conn.execute(
+                                "SELECT status FROM tasks WHERE id = ? AND user_id = ?", (parent_id, user_id)
+                            ).fetchone()
+                            sibling_states = conn.execute(
+                                "SELECT status FROM tasks WHERE parent_task_id = ? AND user_id = ?",
+                                (parent_id, user_id),
+                            ).fetchall()
+                        if parent and parent["status"] != TaskStatus.DONE.value and sibling_states and all(
+                            sibling["status"] == TaskStatus.DONE.value for sibling in sibling_states
+                        ):
+                            if user_id is None:
+                                result = conn.execute(
+                                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status != ?",
+                                    (TaskStatus.DONE.value, encode_dt(now), parent_id, TaskStatus.DONE.value),
+                                )
+                            else:
+                                result = conn.execute(
+                                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status != ? AND user_id = ?",
+                                    (TaskStatus.DONE.value, encode_dt(now), parent_id, TaskStatus.DONE.value, user_id),
+                                )
+                            if result.rowcount:
+                                conn.execute(
+                                    "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                                    (parent_id, "status_changed", TaskStatus.DONE.value, encode_dt(now)),
+                                )
+                                queue.append(parent_id)
+            final_row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return row_to_task(final_row) if final_row else None
 
     def update_task(
         self,
@@ -422,33 +512,135 @@ class SQLiteTaskStore:
             sets.append("parent_task_id = ?")
             params.append(parent_task_id)
         if not sets:
-            return self._get_task(task_id)
+            return self.get_task_for_user(task_id, user_id)
         sets.append("updated_at = ?")
         params.append(encode_dt(now))
         params.append(task_id)
         params.append(user_id)
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            owned = conn.execute(
+                "SELECT id FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+            ).fetchone()
+            if owned is None:
+                log.warning("update_task: task #%d not owned by %r", task_id, user_id)
+                return None
             conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ? AND user_id = ?", params)
             conn.execute(
                 "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
                 (task_id, "updated", None, encode_dt(now)),
             )
-            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+            ).fetchone()
         return row_to_task(row) if row else None
 
     def postpone_task(self, task_id: int, days: int, *, user_id: str | None = None) -> Task | None:
-        task = self._get_task(task_id)
-        if not task:
-            log.warning("postpone_task: task #%d not found", task_id)
-            return None
-        if user_id is not None and task.user_id != user_id:
-            log.warning("postpone_task: task #%d not owned by %r", task_id, user_id)
-            return None
-        if task.due_at is None:
-            return task
-        new_due = task.due_at + timedelta(days=days)
-        log.info("postpone task=%d days=%d new_due=%s", task_id, days, new_due.isoformat())
-        return self.update_task(task_id, due_at=new_due, user_id=user_id or DEFAULT_USER)
+        from .errors import TaskCannotBePostponed
+
+        owner = user_id or DEFAULT_USER
+        now = utcnow()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, owner)
+            ).fetchone()
+            if row is None:
+                log.warning("postpone_task: task #%d not owned by %r", task_id, owner)
+                return None
+            task = row_to_task(row)
+            if task.due_at is None or task.status not in (TaskStatus.TODO, TaskStatus.DOING):
+                raise TaskCannotBePostponed
+            new_due = task.due_at + timedelta(days=days)
+            log.info("postpone task=%d days=%d new_due=%s", task_id, days, new_due.isoformat())
+            conn.execute(
+                "UPDATE tasks SET due_at = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (encode_dt(new_due), encode_dt(now), task_id, owner),
+            )
+            conn.execute(
+                "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                (task_id, "updated", None, encode_dt(now)),
+            )
+            updated = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, owner)
+            ).fetchone()
+        return row_to_task(updated) if updated else None
+
+    def postpone_task_idempotent(
+        self,
+        task_id: int,
+        days: Any,
+        *,
+        user_id: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> tuple[int, dict[str, str]]:
+        """Atomically postpone once and persist the exact API response by user/key."""
+        import json
+
+        owner = user_id
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            previous = conn.execute(
+                """
+                SELECT request_fingerprint, response_status, response_json
+                FROM task_postpone_idempotency
+                WHERE user_id = ? AND idempotency_key = ?
+                """,
+                (owner, idempotency_key),
+            ).fetchone()
+            if previous is not None:
+                if previous["request_fingerprint"] != request_fingerprint:
+                    return 409, {"error": "idempotency_conflict"}
+                return int(previous["response_status"]), json.loads(previous["response_json"])
+
+            if type(days) is not int or days <= 0:
+                return 400, {"error": "days_invalid"}
+
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, owner)
+            ).fetchone()
+            if row is None:
+                status, response = 404, {"error": "没有找到这个任务。"}
+            else:
+                task = row_to_task(row)
+                if task.due_at is None or task.status not in (TaskStatus.TODO, TaskStatus.DOING):
+                    status, response = 409, {"error": "该任务当前无法顺延截止日。"}
+                else:
+                    try:
+                        new_due = task.due_at + timedelta(days=days)
+                    except OverflowError:
+                        return 400, {"error": "days_out_of_range"}
+                    now = utcnow()
+                    conn.execute(
+                        "UPDATE tasks SET due_at = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                        (encode_dt(new_due), encode_dt(now), task_id, owner),
+                    )
+                    conn.execute(
+                        "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                        (task_id, "updated", None, encode_dt(now)),
+                    )
+                    updated = conn.execute(
+                        "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, owner)
+                    ).fetchone()
+                    if updated is None:
+                        raise RuntimeError("postponed task disappeared before response persistence")
+                    updated_task = row_to_task(updated)
+                    due = updated_task.due_at.strftime("%Y-%m-%d %H:%M") if updated_task.due_at else "无截止"
+                    status, response = 200, {
+                        "message": f"任务 #{updated_task.id}「{updated_task.title}」已推迟至 {due}"
+                    }
+
+            conn.execute(
+                """
+                INSERT INTO task_postpone_idempotency
+                    (user_id, idempotency_key, request_fingerprint, response_status, response_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (owner, idempotency_key, request_fingerprint, status,
+                 json.dumps(response, ensure_ascii=False), encode_dt(utcnow())),
+            )
+        return status, response
 
     def drop_task(self, task_id: int, *, user_id: str | None = None) -> Task | None:
         log.info("drop_task id=%d user=%r", task_id, user_id)
@@ -478,6 +670,244 @@ class SQLiteTaskStore:
         if children and all(row["status"] == TaskStatus.DONE.value for row in children):
             log.info("auto-completing parent task #%d", parent_id)
             self.update_status(parent_id, TaskStatus.DONE)
+
+    def _cascade_done_in_transaction(self, conn: sqlite3.Connection, task_id: int, user_id: str, now: datetime) -> None:
+        """Apply the existing descendant/ancestor DONE rules on the caller's transaction."""
+        queue = [task_id]
+        while queue:
+            completed_id = queue.pop(0)
+            completed = conn.execute(
+                "SELECT parent_task_id FROM tasks WHERE id = ? AND user_id = ?",
+                (completed_id, user_id),
+            ).fetchone()
+            children = conn.execute(
+                "SELECT id FROM tasks WHERE parent_task_id = ? AND status != ? AND user_id = ? ORDER BY id",
+                (completed_id, TaskStatus.DONE.value, user_id),
+            ).fetchall()
+            changed_children = 0
+            for child in children:
+                result = conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status != ? AND user_id = ?",
+                    (TaskStatus.DONE.value, encode_dt(now), child["id"], TaskStatus.DONE.value, user_id),
+                )
+                if result.rowcount:
+                    changed_children += 1
+                    conn.execute(
+                        "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                        (child["id"], "status_changed", TaskStatus.DONE.value, encode_dt(now)),
+                    )
+                    queue.append(child["id"])
+            if changed_children:
+                conn.execute(
+                    "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                    (completed_id, "subtasks_completed", None, encode_dt(now)),
+                )
+
+            parent_id = completed["parent_task_id"] if completed else None
+            if parent_id is None:
+                continue
+            parent = conn.execute(
+                "SELECT status FROM tasks WHERE id = ? AND user_id = ?", (parent_id, user_id)
+            ).fetchone()
+            sibling_states = conn.execute(
+                "SELECT status FROM tasks WHERE parent_task_id = ? AND user_id = ?",
+                (parent_id, user_id),
+            ).fetchall()
+            if parent and parent["status"] != TaskStatus.DONE.value and sibling_states and all(
+                sibling["status"] == TaskStatus.DONE.value for sibling in sibling_states
+            ):
+                result = conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status != ? AND user_id = ?",
+                    (TaskStatus.DONE.value, encode_dt(now), parent_id, TaskStatus.DONE.value, user_id),
+                )
+                if result.rowcount:
+                    conn.execute(
+                        "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                        (parent_id, "status_changed", TaskStatus.DONE.value, encode_dt(now)),
+                    )
+                    queue.append(parent_id)
+
+    def complete_task_idempotent(
+        self,
+        task_id: int,
+        *,
+        user_id: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> tuple[int, dict[str, str]]:
+        """Complete one occurrence and persist its exact response atomically."""
+        import json
+
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            previous = conn.execute(
+                """
+                SELECT request_fingerprint, response_status, response_json
+                FROM task_done_idempotency
+                WHERE user_id = ? AND idempotency_key = ?
+                """,
+                (user_id, idempotency_key),
+            ).fetchone()
+            if previous is not None:
+                if previous["request_fingerprint"] != request_fingerprint:
+                    return 409, {"error": "idempotency_conflict"}
+                return int(previous["response_status"]), json.loads(previous["response_json"])
+
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+            ).fetchone()
+            if row is None:
+                # A fresh key must not be reserved by a task the caller cannot access.
+                return 404, {"error": "没有找到这个任务。"}
+            if row["status"] == TaskStatus.DONE.value:
+                # Legacy completed rows may not have an occurrence mapping. Do not
+                # infer or backfill one: a new intent is a stable no-op.
+                status, response = 200, {"message": "任务已完成。"}
+            else:
+                now = utcnow()
+                conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (TaskStatus.DONE.value, encode_dt(now), task_id, user_id),
+                )
+                event = conn.execute(
+                    "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                    (task_id, "status_changed", TaskStatus.DONE.value, encode_dt(now)),
+                )
+                source_done_event_id = int(event.lastrowid)
+                self._cascade_done_in_transaction(conn, task_id, user_id, now)
+
+                next_task_id: int | None = None
+                if row["recurrence"]:
+                    next_due = _next_recurrence_due(decode_dt(row["due_at"]), row["recurrence"])
+                    created_at = encode_dt(now)
+                    next_cursor = conn.execute(
+                        """
+                        INSERT INTO tasks (
+                            title, status, priority, due_at, estimated_minutes, notes,
+                            parent_task_id, recurrence, user_id, created_at, updated_at, tags
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            row["title"], TaskStatus.TODO.value, row["priority"], encode_dt(next_due),
+                            row["estimated_minutes"], row["notes"], None, row["recurrence"],
+                            user_id, created_at, created_at, None,
+                        ),
+                    )
+                    next_task_id = int(next_cursor.lastrowid)
+                    conn.execute(
+                        "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                        (next_task_id, "created", None, created_at),
+                    )
+                    status, response = 200, {
+                        "message": f"已创建下一期任务 #{next_task_id}：{row['title']}"
+                    }
+                else:
+                    status, response = 200, {
+                        "message": f"已完成任务 #{task_id}：{row['title']}"
+                    }
+
+                response_json = json.dumps(response, ensure_ascii=False)
+                conn.execute(
+                    """
+                    INSERT INTO task_done_occurrences
+                        (user_id, source_task_id, source_done_event_id, next_task_id,
+                         response_status, response_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (user_id, task_id, source_done_event_id, next_task_id, status, response_json, encode_dt(now)),
+                )
+
+            conn.execute(
+                """
+                INSERT INTO task_done_idempotency
+                    (user_id, idempotency_key, request_fingerprint, response_status, response_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, idempotency_key, request_fingerprint, status,
+                 json.dumps(response, ensure_ascii=False), encode_dt(utcnow())),
+            )
+        return status, response
+
+    def complete_task_agent(
+        self, task_id: int, *, user_id: str
+    ) -> tuple[Task | None, bool, Task | None]:
+        """原子完成 Agent 目标；返回任务、本次是否发生转换及本次创建的 next。"""
+        import json
+
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+            ).fetchone()
+            if row is None:
+                return None, False, None
+            if row["status"] == TaskStatus.DONE.value:
+                # 旧 DONE 行或已完成 occurrence 均为稳定 no-op，不回填 mapping。
+                return row_to_task(row), False, None
+
+            now = utcnow()
+            conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (TaskStatus.DONE.value, encode_dt(now), task_id, user_id),
+            )
+            event = conn.execute(
+                "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                (task_id, "status_changed", TaskStatus.DONE.value, encode_dt(now)),
+            )
+            source_done_event_id = int(event.lastrowid)
+            self._cascade_done_in_transaction(conn, task_id, user_id, now)
+
+            next_row = None
+            next_task_id = None
+            if row["recurrence"]:
+                next_due = _next_recurrence_due(decode_dt(row["due_at"]), row["recurrence"])
+                created_at = encode_dt(now)
+                next_cursor = conn.execute(
+                    """
+                    INSERT INTO tasks (
+                        title, status, priority, due_at, estimated_minutes, notes,
+                        parent_task_id, recurrence, user_id, created_at, updated_at, tags
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["title"], TaskStatus.TODO.value, row["priority"], encode_dt(next_due),
+                        row["estimated_minutes"], row["notes"], None, row["recurrence"],
+                        user_id, created_at, created_at, None,
+                    ),
+                )
+                next_task_id = int(next_cursor.lastrowid)
+                conn.execute(
+                    "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+                    (next_task_id, "created", None, created_at),
+                )
+                next_row = conn.execute(
+                    "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (next_task_id, user_id)
+                ).fetchone()
+                response = {"message": f"已创建下一期任务 #{next_task_id}：{row['title']}"}
+            else:
+                response = {"message": f"已完成任务 #{task_id}：{row['title']}"}
+
+            conn.execute(
+                """
+                INSERT INTO task_done_occurrences
+                    (user_id, source_task_id, source_done_event_id, next_task_id,
+                     response_status, response_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id, task_id, source_done_event_id, next_task_id,
+                    200, json.dumps(response, ensure_ascii=False), encode_dt(now),
+                ),
+            )
+            completed_row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+            ).fetchone()
+
+        return (
+            row_to_task(completed_row) if completed_row else None,
+            True,
+            row_to_task(next_row) if next_row else None,
+        )
 
     def complete_recurring_task(self, task_id: int, *, user_id: str | None = None) -> Task | None:
         task = self.update_status(task_id, TaskStatus.DONE, user_id=user_id)
@@ -824,8 +1254,8 @@ class SQLiteTaskStore:
         with self._connect() as conn:
             for task_id in task_ids:
                 result = conn.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-                    (status.value, encode_dt(utcnow()), task_id, user_id),
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status != ?",
+                    (status.value, encode_dt(utcnow()), task_id, user_id, status.value),
                 )
                 if result.rowcount > 0:
                     updated += 1
@@ -906,48 +1336,26 @@ class SQLiteTaskStore:
     # ── export / import ──────────────────────────────────────────────
 
     def export_user_data(self, user_id: str = DEFAULT_USER) -> dict:
-        tasks = self.list_tasks(status=None, user_id=user_id)
-        memory = self.get_all_memory(user_id=user_id)
-        log.info("export user=%r tasks=%d", user_id, len(tasks))
-        return {
-            "version": "1.0",
-            "exported_at": utcnow().isoformat(),
-            "user_id": user_id,
-            "tasks": [
-                {
-                    "title": t.title,
-                    "status": t.status.value,
-                    "priority": t.priority.value,
-                    "due_at": t.due_at.isoformat() if t.due_at else None,
-                    "estimated_minutes": t.estimated_minutes,
-                    "notes": t.notes,
-                    "parent_task_id": t.parent_task_id,
-                    "recurrence": t.recurrence,
-                    "created_at": t.created_at.isoformat(),
-                }
-                for t in tasks
-            ],
-            "memory": memory,
-        }
+        from .backup import export_user_data
+
+        return export_user_data(self, user_id, "sqlite")
 
     def import_user_data(self, data: dict, user_id: str = DEFAULT_USER) -> int:
-        imported = 0
-        for item in data.get("tasks", []):
-            due_at = datetime.fromisoformat(item["due_at"]) if item.get("due_at") else None
-            self.create_task(
-                item["title"],
-                due_at=due_at,
-                priority=Priority(item.get("priority", "medium")),
-                estimated_minutes=item.get("estimated_minutes"),
-                notes=item.get("notes"),
-                recurrence=item.get("recurrence"),
-                user_id=user_id,
-            )
-            imported += 1
-        for key, value in data.get("memory", {}).items():
-            self.set_memory(key, value, user_id=user_id)
-        log.info("import user=%r tasks=%d", user_id, imported)
-        return imported
+        from .backup import import_user_data
+
+        return import_user_data(self, data, user_id, "sqlite")
+
+    def import_user_data_with_summary(self, data: dict, user_id: str = DEFAULT_USER) -> dict[str, Any]:
+        """导入 v1 备份并返回凭据 memory 排除摘要。"""
+        from .backup import import_user_data_with_summary
+
+        return import_user_data_with_summary(self, data, user_id, "sqlite")
+
+    def restore_user_data(self, data: dict, user_id: str = DEFAULT_USER) -> dict[str, Any]:
+        """原子恢复 v2 备份到当前用户的空数据域。"""
+        from .backup import restore_user_data
+
+        return restore_user_data(self, data, user_id, "sqlite")
 
     # ── heartbeat / 心跳功能 ─────────────────────────────────
 
@@ -1036,20 +1444,77 @@ class SQLiteTaskStore:
         duration_minutes: int,
         *,
         user_id: str = DEFAULT_USER,
-    ) -> None:
-        """记录一次专注时段"""
+        actual_seconds: int | None = None,
+        planned_minutes: int | None = None,
+        started_at: datetime | None = None,
+        outcome: str | None = None,
+        session_id: str | None = None,
+        ended_at: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """记录专注时段；新格式保留 client-frozen UTC 时间并按用户幂等。"""
+        import json
+        from .errors import FocusTaskNotFound, IdempotencyConflict
+        from .focus_utils import focus_result, same_focus_payload, validate_focus_session
+
         log.info("record_focus_session task=%s duration=%d user=%r", task_id, duration_minutes, user_id)
         now = utcnow()
+        if actual_seconds is None:
+            payload = {"duration_minutes": int(duration_minutes)}
+        else:
+            if task_id is None:
+                raise FocusTaskNotFound
+            effective_planned_minutes = duration_minutes if planned_minutes is None else planned_minutes
+            validated_planned_minutes, normalized_started, normalized_ended = validate_focus_session(
+                actual_seconds,
+                effective_planned_minutes,
+                started_at=started_at,
+                ended_at=ended_at,
+                outcome=outcome,
+                session_id=session_id,
+            )
+            payload = {
+                "duration_minutes": round(actual_seconds / 60, 2),
+                "actual_seconds": actual_seconds,
+                "planned_minutes": validated_planned_minutes,
+                "started_at": encode_dt(normalized_started),
+                "ended_at": encode_dt(normalized_ended),
+                "outcome": outcome,
+                "session_id": session_id,
+            }
+        payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if actual_seconds is not None:
+                owned_task = conn.execute(
+                    "SELECT id FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+                ).fetchone()
+                if owned_task is None:
+                    raise FocusTaskNotFound
+            if session_id and actual_seconds is not None:
+                # Reserve SQLite's writer lock before checking: same-user retries
+                # cannot both observe absence and append separate events.
+                candidates = conn.execute(
+                    """
+                    SELECT e.task_id, e.payload FROM task_events e
+                    JOIN tasks t ON e.task_id = t.id
+                    WHERE e.event_type = ? AND t.user_id = ?
+                    """,
+                    ("focus_session", user_id),
+                ).fetchall()
+                for candidate in candidates:
+                    try:
+                        existing_payload = json.loads(candidate["payload"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if existing_payload.get("session_id") == session_id:
+                        if not same_focus_payload(candidate["task_id"], existing_payload, task_id, payload):
+                            raise IdempotencyConflict
+                        return focus_result(candidate["task_id"], existing_payload)
             conn.execute(
                 "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
-                (
-                    task_id,
-                    "focus_session",
-                    f'{{"duration_minutes": {duration_minutes}}}',
-                    encode_dt(now),
-                ),
+                (task_id, "focus_session", payload_json, encode_dt(now)),
             )
+        return focus_result(task_id, payload) if actual_seconds is not None else None
 
     def get_focus_sessions(self, *, user_id: str = DEFAULT_USER) -> list[dict]:
         """获取用户所有专注记录（最近30天）"""
@@ -1068,13 +1533,59 @@ class SQLiteTaskStore:
         import json
         sessions = []
         for row in rows:
-            payload = json.loads(row["payload"]) if row["payload"] else {}
+            try:
+                payload = json.loads(row["payload"]) if row["payload"] else {}
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            raw_actual_seconds = payload.get("actual_seconds")
+            try:
+                actual_seconds = int(raw_actual_seconds) if raw_actual_seconds is not None else None
+                if actual_seconds is not None and actual_seconds < 0:
+                    actual_seconds = None
+            except (TypeError, ValueError):
+                actual_seconds = None
+            started_at = decode_dt(payload.get("started_at")) if payload.get("started_at") else None
+            from .focus_utils import parse_timestamp
             sessions.append({
                 "task_id": row["task_id"],
-                "duration_minutes": payload.get("duration_minutes", 0),
-                "started_at": datetime.fromisoformat(row["created_at"]).astimezone() if row["created_at"] else None,
+                "duration_minutes": actual_seconds / 60 if actual_seconds is not None else payload.get("duration_minutes", 0),
+                "planned_minutes": payload.get("planned_minutes", payload.get("duration_minutes", 0)),
+                "actual_seconds": actual_seconds,
+                "is_actual": actual_seconds is not None,
+                "outcome": payload.get("outcome", "completed" if actual_seconds is not None else "legacy"),
+                "session_id": payload.get("session_id"),
+                "started_at": started_at or (decode_dt(row["created_at"]) if row["created_at"] else None),
+                "ended_at": parse_timestamp(payload.get("ended_at")),
             })
         return sessions
+
+    def get_review_data(self, *, user_id: str = DEFAULT_USER) -> dict[str, list[dict[str, Any]]]:
+        """Read owner-scoped status/focus events in one SQLite snapshot."""
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            completed = conn.execute(
+                """
+                SELECT e.id AS event_id, e.task_id, e.payload AS status_value,
+                       e.created_at AS completed_at, t.title,
+                       t.estimated_minutes AS estimated_minutes_reference
+                FROM task_events e JOIN tasks t ON e.task_id = t.id
+                WHERE t.user_id = ? AND e.event_type = 'status_changed'
+                ORDER BY e.id
+                """,
+                (user_id,),
+            ).fetchall()
+            focus = conn.execute(
+                """
+                SELECT e.task_id, e.payload, e.created_at
+                FROM task_events e JOIN tasks t ON e.task_id = t.id
+                WHERE t.user_id = ? AND e.event_type = 'focus_session'
+                """,
+                (user_id,),
+            ).fetchall()
+        return {
+            "status_events": [dict(row) for row in completed],
+            "focus_sessions": [dict(row) for row in focus],
+        }
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────

@@ -1,0 +1,91 @@
+{
+  "test": "task completion -> reopen -> complete -> 今日收尾 -> refresh",
+  "origin": "http://127.0.0.1:37469",
+  "database": "isolated temporary SQLite",
+  "browser": {
+    "ianaTimeZone": "UTC",
+    "localDate": "2026-10-04",
+    "sameLoopbackOriginAcrossRefresh": true
+  },
+  "query": {
+    "timeZone": "UTC",
+    "localDate": "2026-10-04",
+    "parameterCounts": {
+      "timeZone": 1,
+      "localDate": 1
+    }
+  },
+  "responseBoundary": {
+    "dayStartUtc": "2026-10-04T00:00:00+00:00",
+    "dayEndUtcExclusive": "2026-10-05T00:00:00+00:00",
+    "reviewPresent": true,
+    "focusAttributionNote": "专注时长按 ended_at 所在本地日整段归属，不跨日拆分；只统计带 ended_at 和 actual_seconds 的会话，不用预估时长补值。",
+    "deidentification": "review payload details, task IDs, titles, account ID and credentials omitted; titles are not represented as historical snapshots"
+  },
+  "reviewReads": [
+    {
+      "requestIndex": 1,
+      "phase": "after-reopen-and-recomplete",
+      "completedCount": 2,
+      "completedEventsCount": 2,
+      "completedEventTimes": [
+        "2026-10-04T04:00:25.167814+00:00",
+        "2026-10-04T04:02:59.235773+00:00"
+      ],
+      "todayFocusActualSeconds": 137,
+      "todayFocusSessionCount": 1
+    },
+    {
+      "requestIndex": 2,
+      "phase": "explicit-entry-open-before-refresh",
+      "completedCount": 2,
+      "completedEventsCount": 2,
+      "completedEventTimes": [
+        "2026-10-04T04:00:25.167814+00:00",
+        "2026-10-04T04:02:59.235773+00:00"
+      ],
+      "todayFocusActualSeconds": 137,
+      "todayFocusSessionCount": 1
+    },
+    {
+      "requestIndex": 3,
+      "phase": "after-page-refresh-and-existing-review-button",
+      "completedCount": 2,
+      "completedEventsCount": 2,
+      "completedEventTimes": [
+        "2026-10-04T04:00:25.167814+00:00",
+        "2026-10-04T04:02:59.235773+00:00"
+      ],
+      "todayFocusActualSeconds": 137,
+      "todayFocusSessionCount": 1
+    }
+  ],
+  "completionTransition": {
+    "seededCompletedCount": 1,
+    "afterReopenThenCompleteCount": 2,
+    "newEventsAfterReopenThenComplete": 1
+  },
+  "focusFixture": {
+    "endedSessionActualSeconds": 137,
+    "endedSessionCounted": true,
+    "plannedDurationOnlySessionMinutes": 25,
+    "plannedDurationOnlySessionCounted": false
+  },
+  "assertions": {
+    "uniqueBrowserTimezoneAndLocalDateSent": true,
+    "taskListCompletionShowsTodayWrapUpEntry": true,
+    "reviewOpeningDoesNotMutateOrIncrementCounts": true,
+    "sameDateRefreshKeepsCountsAndActualSecondsStable": true,
+    "focusUsesEndedAtAndActualSecondsNotEstimate": true,
+    "untrustedSvgLikeTitleRenderedAsText": true,
+    "svgLikeTitleDidNotCreateImageElement": true,
+    "titleSnapshotSemanticsNotClaimed": true
+  },
+  "separateExistingContractCoverage": {
+    "duplicateDoneDoesNotAddTransition": true,
+    "reopenThenDoneAddsExactlyOneTransition": true,
+    "parentChildCascadeCountsEachTransition": true,
+    "zeroSecondEndedSessionStillCountsAsSession": true,
+    "contractTestFile": "tests/test_review_focus_contract.py"
+  }
+}

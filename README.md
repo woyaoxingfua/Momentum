@@ -4,11 +4,12 @@
 
 [English](./README.en.md)
 
-Momentum 是一个 **本地优先（Local-first）** 的任务管理工具：
-- 用自然语言快速记任务
-- 用 AI 自动拆解复杂目标
-- 用数据洞察你的执行模式
-- 用 Web + CLI 双入口覆盖不同工作流
+Momentum 是一个 **本地优先（Local-first）** 的任务与专注系统，通过 Web 工作台和 CLI 覆盖从规划到复盘的日常流程：
+- 自然语言录入任务、拆解复杂目标，并管理任务状态、截止时间、标签与依赖关系。
+- 从任务卡、下一步建议或今日回顾开始专注；计时支持暂停、恢复和结束，并记录实际专注时长。
+- 今日收尾汇总已完成事项与实际专注时间，也可继续处理未完成任务、调整截止时间或顺延。
+- Web 工作台适配桌面和手机，支持主题、背景、城市天气等偏好；外部 AI 助手可通过受鉴权的 MCP 接入。
+- 默认使用本地 SQLite，也可配置 MySQL 或 Azure MySQL；远程 MCP 连接按安全配置启用。
 
 ---
 
@@ -38,7 +39,7 @@ Momentum 是一个 **本地优先（Local-first）** 的任务管理工具：
 
 ### 3) MCP Server（让外部 AI Agent 调用 Momentum）
 - 把全部 **47 个工具**通过标准 MCP 协议暴露给外部 AI 助手
-- 支持 **stdio**（本地：Claude Desktop / Cursor）和 **SSE**（远程 HTTP）两种传输
+- 支持本地 **stdio**、推荐的远程 **Streamable HTTP**，以及兼容旧客户端的 **SSE**
 - 可选 API Key 鉴权，远程调用更安全
 - 零重复代码：复用项目已有的 `function_tool` 定义
 
@@ -47,6 +48,43 @@ Momentum 是一个 **本地优先（Local-first）** 的任务管理工具：
 - 任务预估时间偏差分析
 - 今日/本周到期、逾期与进行中任务追踪
 - 下一步行动建议（Next Best Action）
+
+## 🎨 工作台外观、背景与城市
+
+在 Web 工作台打开侧栏的「偏好设置」；手机上先点底部「设置」。背景、城市和界面风格控件在桌面与移动设置面板中都可用。
+
+### 背景图片
+
+- **本机图片**：点「从本机选择图片」，选择不超过 8 MB 的 PNG、JPEG、WebP 或 GIF。图片内容保存在当前浏览器的 IndexedDB，不会上传或占 Momentum 服务器磁盘。账户同步只记录“本地图片”来源标记和透明度，不含图片内容；目前不能跨设备同步，每台设备需各自上传。
+- **公开图片 URL**：输入可公开访问的 HTTP(S) 图片地址，点「应用背景」。Momentum 会在浏览器检查图片能否加载，并将来源、URL 和透明度保存到账户偏好；图片由每台设备的浏览器直接读取，不会上传到 Momentum。当前校验会拒绝 `localhost`、`.local` 主机名、常见私网 IP 字面值以及带账号或密码的 URL。切换到其他设备时，该 URL 必须仍可公开访问。
+- 点「清除背景」会清除当前浏览器保存的本地图片，并将账户背景引用清除。
+
+### 城市与天气
+
+在「城市与天气」中搜索城市并从候选列表选中结果。点「测试这个城市天气」会实际请求 Open-Meteo 天气服务，并显示结果或错误；确认可用后点「设为默认城市」，城市、国家和坐标会保存到账户偏好，供其他使用同一账户的设备恢复。
+
+### 内置主题与自定义配色
+
+「选择一种色调」提供 **纸页（暖白）**、**墨色（夜读）**、**苔绿（静谧）**和**午夜（冷蓝）**四种内置主题；选择后会尝试同步到账户。可选的「导入配色 JSON」只导入安全的颜色令牌：文件须不超过 8 KB，必须是只含下列 12 个键的 JSON 对象，每个值为 `#RRGGBB` 或 `#RRGGBBAA` 十六进制颜色。导入后立即应用，并且只保存在此浏览器，不同步到账户。
+
+```json
+{
+  "bg": "#f3f0e8",
+  "bg2": "#ebe6dc",
+  "surface": "#fffdf8",
+  "surface2": "#f7f2e8",
+  "surface3": "#eee7da",
+  "border": "#e0d8c8",
+  "border2": "#cfc5b3",
+  "text": "#252921",
+  "text2": "#5d6257",
+  "text3": "#8a8d80",
+  "accent": "#426b56",
+  "accent2": "#315441"
+}
+```
+
+点击「导入配色 JSON（可选）」选择该文件即可。导入器拒绝缺失或额外字段、非十六进制颜色及超过大小限制的文件；它**不接受或执行任意 HTML、CSS 或 JavaScript**。
 
 ---
 
@@ -101,7 +139,7 @@ momentum-agent init --skip-db-check          # 跳过 DB 连接测试
 | 5 | 默认位置（城市） | `user_memory` |
 | 6 | 心跳提醒（启用 / 起止小时 / 间隔） | `user_memory` |
 | 7 | Web 服务（host / port + 端口占用检测） | `momentum.config.json` |
-| 8 | MCP Server SSE（可选 + API Key 鉴权） | `momentum.config.json` + `.env` |
+| 8 | MCP HTTP Server（可选 + API Key 鉴权） | `momentum.config.json` + `.env` |
 | 9 | 日志（级别 / 目录 / 轮转） | `.env` |
 | 10 | 进阶 AI 选项（思考模式 / 推理强度 / 追踪） | `.env` |
 | 11 | 配置预览 + 确认写入 + 可选启动 serve | — |
@@ -200,6 +238,43 @@ momentum-agent import backup.json
 momentum-agent chat "帮我安排今天可完成的任务"
 ```
 
+对周期任务，`done` 只有在任务真实从非完成状态变为已完成时才创建下一期；任务已完成时再次执行不会新建，先 `reopen` 后再次完成才会创建新一期。普通任务执行 `done` 只标记完成，不创建下一期。
+
+### Web API 任务顺延
+
+已登录请求调用 `POST /api/tasks/{task_id}/postpone`，并必须在 `Idempotency-Key` 请求头中提供 UUIDv4；该键按认证用户隔离。请求体可传 JSON `{"days": 1}`；省略 `days` 时默认为 3。显式 `days` 必须是 JSON 正整数；布尔值、浮点数（包括 `1.0`）、字符串、`null`、0 或负数均返回 `400` `{"error":"days_invalid"}`。若正整数加到当前截止时间后超出可表示日期范围，返回 `400` `{"error":"days_out_of_range"}`。这两类无效请求都在写入任务、`updated` 事件或幂等记录前拒绝。首次成功返回 `200` 和现有 `{"message": "..."}` 响应。
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/tasks/42/postpone \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: 11111111-1111-4111-8111-111111111111' \
+  -d '{"days": 1}'
+```
+
+同一用户用同一个键和相同请求重试，会收到第一次保存的 HTTP 状态和 JSON 响应，不会再次顺延或新增 `updated` 事件。网络超时、响应丢失或结果不确定时，必须复用原键和原请求体；只有新的独立顺延意图才生成新的 UUIDv4。
+
+同一键用于不同的任务或 `days` 时返回 `409` `{"error":"idempotency_conflict"}`，且不会覆盖原结果。缺少键返回 `400` `{"error":"idempotency_key_required"}`；格式无效或不是 UUIDv4 返回 `400` `{"error":"idempotency_key_invalid"}`。任务不存在或不属于当前用户仍返回通用 `404`；任务没有截止日或状态不可顺延时返回 `409`，这类确定性响应也会按该键重放。
+
+### Web API 任务完成
+
+已登录请求调用 `POST /api/tasks/{task_id}/done`，必须提供按认证用户隔离的 `Idempotency-Key: <UUIDv4>`；无需请求体。缺少键返回 `400` `{"error":"idempotency_key_required"}`；格式错误或非 UUIDv4 返回 `400` `{"error":"idempotency_key_invalid"}`。同一用户对同一任务使用相同键重试，会原样收到第一次保存的 HTTP 状态与 JSON；同键用于不同任务返回 `409` `{"error":"idempotency_conflict"}`。任务不存在或不属于当前用户返回通用 `404` `{"error":"没有找到这个任务。"}`。
+
+只有真实的非 `done`→`done` 状态转移会写入完成事件。对 recurring task，该完成 occurrence 最多创建一条下一期；同一完成意图的重放返回与首次相同的下一期响应。任务已经 `done` 时使用新键是无写操作，返回并缓存 `200` `{"message":"任务已完成。"}`；重新打开后再次完成须用新 UUIDv4，作为新的完成 occurrence。结果不确定时，客户端必须保留并复用原键，不能自动换新键重发。
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/tasks/42/done \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Idempotency-Key: 11111111-1111-4111-8111-111111111112'
+```
+
+
+### Web API 备份大小限制
+
+`/api/import` 与 `/api/export` 共用 **16 MiB（16,777,216 字节）**上限。导入按完整 UTF-8 HTTP 请求体计量（包含外层 `{"data": ...}` JSON 包装）；请求体超过上限时返回单个 JSON `413 Payload Too Large`，随后关闭连接，且不会解析或写入数据。导出按序列化后的 UTF-8 JSON 响应体计量；超过上限时返回 JSON `413` 错误，不发送附件头或备份响应片段。上限以内（包括恰好 16 MiB）的请求/导出允许通过。
+
+其他 JSON API 的请求体上限仍为 **2 MiB（2,097,152 字节）**，超限同样返回一次 JSON `413`；此限制不随备份路由放宽。
+
 ---
 
 ## 🔌 MCP Server — 让外部 AI Agent 调用 Momentum
@@ -212,12 +287,17 @@ Momentum 把全部 47 个工具（任务 / 子任务 / 依赖 / 标签 / 笔记 
 pip install -e ".[mcp]"
 ```
 
+当前 MCP server 使用 Python SDK 1.x 的低层 `Server` API，因此依赖范围限定为 `mcp>=1.28,<2`；SDK 2.x 的服务器接口不兼容，需完成迁移和测试后才能升级。
+
 ### 传输方式
 
 | 方式 | 适用场景 | 启动命令 |
 |------|---------|---------|
 | **stdio**（默认） | 本地 Agent（Claude Desktop / Cursor / 命令行） | `momentum-agent mcp` |
-| **SSE** | 远程 / 网络 Agent，HTTP 接入 | `momentum-agent mcp --transport sse` |
+| **Streamable HTTP（推荐）** | 现代远程 / 网络 MCP 客户端 | `momentum-agent mcp --transport streamable-http` |
+| **SSE（兼容旧客户端）** | 仍使用旧 SSE endpoint 的客户端 | `momentum-agent mcp --transport sse` |
+
+**安全要求：**stdio 可无密钥使用。Streamable HTTP 和 SSE 只有绑定到 loopback 地址时才允许无密钥（例如 `127.0.0.1`、`::1` 或 `localhost`）；`0.0.0.0`、`::`、LAN/Tailscale 地址及其他非 loopback host 均必须配置 `MOMENTUM_MCP_API_KEY`，否则启动会被拒绝。配置密钥后，初始化和后续每个 MCP HTTP 请求都必须带 `Authorization: Bearer <密钥>`。
 
 ### stdio 模式：接入 Claude Desktop
 
@@ -251,18 +331,28 @@ pip install -e ".[mcp]"
 }
 ```
 
-### SSE 模式：远程 HTTP 接入
+### Streamable HTTP 模式：远程接入（推荐）
 
 ```bash
-# 监听 0.0.0.0:8766
-momentum-agent mcp --transport sse --host 0.0.0.0 --port 8766
+# 默认监听 127.0.0.1:8766，endpoint 为 /mcp
+momentum-agent mcp --transport streamable-http
 
-# 可选：设置 API Key 保护
+# 非 loopback host 必须先配置 API Key；服务端拒绝无密钥启动
 export MOMENTUM_MCP_API_KEY="your-secret-key"
-momentum-agent mcp --transport sse
+momentum-agent mcp --transport streamable-http --host 0.0.0.0 --port 8766
 ```
 
-外部 Agent 连接 `http://your-host:8766/sse`，若设置了 API Key，请求需带 `Authorization: Bearer your-secret-key` 头。
+客户端连接 `http://your-host:8766/mcp`；初始化和后续的每个请求都需带 `Authorization: Bearer your-secret-key`。若只在本机使用，可保持默认的 `127.0.0.1` 并不设置密钥。
+
+### SSE 模式：旧客户端兼容
+
+```bash
+# 远程 SSE 同样必须设置 API Key；无密钥时只可绑定 loopback
+export MOMENTUM_MCP_API_KEY="your-secret-key"
+momentum-agent mcp --transport sse --host 0.0.0.0 --port 8766
+```
+
+旧客户端连接 `http://your-host:8766/sse`。SSE 建连和每个 `/messages/` 后续请求都必须带同一个 Bearer 头。只在本机使用时可省略密钥并绑定 `127.0.0.1`、`::1` 或 `localhost`。
 
 ### 指定目标用户
 
@@ -287,6 +377,8 @@ momentum-agent mcp
 | 专注 | 6 | `get_next_best_task` `get_overdue_tasks` `get_completion_stats` |
 | 天气 | 5 | `get_current_weather` `plan_outdoor_activity` |
 | 扩展 | 7 | `get_all_tags` `save_note` `get_daily_review` `get_user_context` |
+
+天气默认从 [Open-Meteo](https://open-meteo.com/) 获取当前数据；常见城市直接使用内置坐标，其他城市通过其地理编码 API 解析。网络不可用时会返回明确错误，不会伪造随机天气。请遵守 Open-Meteo 的适用许可与署名要求。
 
 ---
 
@@ -353,9 +445,17 @@ https://myfirst.cc.cd
 
 ---
 
-## 🖼️ 截图
+## 🖼️ 界面截图
 
-当前仓库暂未提供最新界面截图。
+以下为桌面与移动端的任务工作台和专注界面，截图中的任务名称为演示数据。
+
+**桌面端**
+
+![Momentum 桌面端任务工作台、下一步建议与专注计时](./docs/readme-images/momentum-focus-desktop.png)
+
+**移动端**
+
+![Momentum 移动端任务卡与专注计时](./docs/readme-images/momentum-focus-mobile.png)
 
 ---
 

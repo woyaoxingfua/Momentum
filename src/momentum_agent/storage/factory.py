@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from urllib.parse import urlparse
 
 from .mysql import MySQLTaskStore
@@ -38,7 +39,14 @@ def create_task_store(database_url: str | None = None) -> SQLiteTaskStore | MySQ
         path = parsed.path
         if scheme == "sqlite" and path:
             # urlparse('sqlite:///:memory:').path == '/:memory:'
-            db_path = ":memory:" if path.lstrip("/") == ":memory:" else path
+            stripped = path.lstrip("/")
+            if stripped == ":memory:":
+                db_path = ":memory:"
+            elif re.match(r"^[A-Za-z]:[/\\]", stripped):
+                # Windows 盘符路径：sqlite:///C:\dir\db 的 parsed.path 是 '/C:\dir\db'
+                db_path = stripped
+            else:
+                db_path = path
         else:
             db_path = database_url
         return SQLiteTaskStore(db_path)

@@ -553,7 +553,7 @@ class TestRunMcpServerEntry:
         parser = argparse.ArgumentParser()
         sub = parser.add_subparsers(dest="command")
         mcp_p = sub.add_parser("mcp")
-        mcp_p.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+        mcp_p.add_argument("--transport", choices=["stdio", "streamable-http", "sse"], default="stdio")
         mcp_p.add_argument("--host", default="127.0.0.1")
         mcp_p.add_argument("--port", type=int, default=8766)
         mcp_p.add_argument("--user", default=None)
@@ -562,3 +562,65 @@ class TestRunMcpServerEntry:
         assert args.command == "mcp"
         assert args.transport == "sse"
         assert args.port == 9999
+
+
+class TestStreamableHttpTransport:
+    def test_endpoint_checks_bearer_key_before_protocol_handling(self, server):
+        import mcp.types as types
+        from starlette.testclient import TestClient
+        from momentum_agent.mcp_server import create_streamable_http_app
+
+        app = create_streamable_http_app(server, api_key="test-secret")
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        with TestClient(app) as client:
+            denied = client.post(
+                "/mcp",
+                headers=headers,
+                json={"jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": {}},
+            )
+            assert denied.status_code == 401
+            invalid_key = client.post(
+                "/mcp",
+                headers={**headers, "Authorization": "Bearer wrong-secret"},
+                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            )
+            assert invalid_key.status_code == 401
+
+            auth_headers = {**headers, "Authorization": "Bearer test-secret"}
+            initialized = client.post(
+                "/mcp",
+                headers=auth_headers,
+                json={
+                    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {
+                        "protocolVersion": types.LATEST_PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {"name": "momentum-test", "version": "1.0"},
+                    },
+                },
+            )
+            assert initialized.status_code == 200
+            assert initialized.headers.get("mcp-session-id")
+
+            auth_headers["MCP-Session-Id"] = initialized.headers["mcp-session-id"]
+            auth_headers["MCP-Protocol-Version"] = types.LATEST_PROTOCOL_VERSION
+            missing_key_headers = {
+                key: value for key, value in auth_headers.items() if key != "Authorization"
+            }
+            denied_message = client.post(
+                "/mcp",
+                headers=missing_key_headers,
+                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            )
+            assert denied_message.status_code == 401
+
+            listed = client.post(
+                "/mcp",
+                headers=auth_headers,
+                json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+            )
+            assert listed.status_code == 200
+            assert "create_task" in listed.text

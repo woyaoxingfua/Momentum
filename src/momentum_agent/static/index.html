@@ -10,6 +10,11 @@
     <link rel="stylesheet" href="/app.css" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <style>
+      .due-on-filter-chip { display: inline-flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-2); border: 1px solid var(--border); border-radius: 999px; color: var(--text-2); background: var(--bg-2); font-size: 12px; white-space: nowrap; }
+      .due-on-filter-chip[hidden] { display: none; }
+      .due-on-filter-chip button { min-height: 26px; padding: 0 var(--space-2); }
+    </style>
   </head>
   <body>
     <main class="shell">
@@ -18,7 +23,8 @@
         <header class="topbar">
           <div class="topbar-brand">
             <p class="eyebrow">Momentum</p>
-            <h1>任务助手</h1>
+            <h1>今天，先推进一件重要的事</h1>
+            <p class="topbar-subtitle">把脑中的念头变成现实里能完成的一步。</p>
           </div>
           <div class="topbar-right">
             <span class="muted" id="currentUser"></span>
@@ -33,7 +39,7 @@
 
         <section class="composer" aria-label="创建任务">
           <div id="imagePreview" class="image-preview" style="display: none;"></div>
-          <textarea id="taskInput" rows="3" placeholder="写下想推进的事，按 Ctrl+Enter 快速添加&#10;也可以上传图片，让 AI 识别任务"></textarea>
+          <textarea id="taskInput" rows="3" placeholder="写下一个你想看到结果的事情…&#10;按 Ctrl+Enter 快速添加，也可以从图片提取任务"></textarea>
           <div class="composer-actions">
             <label id="imageUploadLabel" class="image-upload-label" title="上传图片">
               <input id="imageUpload" type="file" accept="image/*" multiple hidden />
@@ -48,8 +54,13 @@
 
         <section class="insight" aria-live="polite">
           <span class="insight-label">下一步</span>
-          <p id="adviceText">正在读取任务状态...</p>
+          <div class="next-step-content">
+            <p id="adviceText">正在读取任务状态...</p>
+            <div id="suggestionCard" class="suggestion-mount" hidden></div>
+          </div>
         </section>
+
+        <section id="todayReview" class="today-review" aria-live="polite" aria-label="今天的复盘" hidden></section>
 
         <section class="heartbeat" id="heartbeatSection" aria-live="polite" style="display: none;">
           <div class="heartbeat-header">
@@ -75,6 +86,16 @@
             <button id="sortButton" class="ghost" title="按推荐排序">智能排序</button>
             <div class="heading-actions">
               <a href="/stats.html" class="ghost" style="display:inline-flex;align-items:center;height:var(--input-h);padding:0 var(--space-3);font-size:12px;">仪表盘</a>
+              <button id="dueDateFilterButton" class="ghost" type="button" aria-pressed="false" title="只显示待办或进行中且已到期的任务">逾期/今天到期</button>
+              <div id="dueOnFilterChip" class="due-on-filter-chip" aria-live="polite" hidden>
+                <span>指定截止日：<strong id="dueOnFilterLabel"></strong></span>
+                <button id="clearDueOnFilterButton" class="ghost" type="button" aria-label="清除指定截止日筛选">清除</button>
+              </div>
+              <div id="unestimatedDueFilterChip" class="due-on-filter-chip" aria-live="polite" hidden>
+                <span>未估时（本地逾期+今天）</span>
+                <span id="quickEstimateStatus" class="quick-estimate-status" role="status" aria-live="polite" hidden></span>
+                <button id="clearUnestimatedDueFilterButton" class="ghost" type="button" aria-label="清除未估时筛选">清除</button>
+              </div>
               <input id="searchInput" placeholder="搜索任务..." class="search-input" aria-label="搜索任务" />
               <button id="refreshButton" class="ghost" title="刷新">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23,4 23,10 17,10"/><polyline points="1,20 1,14 7,14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -85,10 +106,12 @@
               <label class="import-label" title="导入数据">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 导入
-                <input id="importFile" type="file" accept=".json" hidden />
+                <input id="importFile" type="file" accept=".json" aria-describedby="backupHelp backupStatus" hidden />
               </label>
             </div>
           </div>
+          <p id="backupHelp" class="backup-help">v1.0 导入为兼容合并；v2.0 为完整恢复，仅能恢复到当前认证用户的空数据域。备份 JSON 导入请求最大 16 MiB（16,777,216 字节）；超过上限会在提交前被拒绝。</p>
+          <p id="backupStatus" class="backup-status" role="status" aria-live="polite" aria-atomic="true" hidden></p>
           <div id="tasks" class="tasks" role="list"></div>
         </section>
       </section>
@@ -97,7 +120,7 @@
       <aside class="coach" aria-label="Agent 对话">
         <div class="coach-header">
           <div class="section-heading">
-            <h2>Agent</h2>
+            <h2>协作教练</h2>
             <span class="muted" id="providerStatus">读取中...</span>
           </div>
         </div>
@@ -116,17 +139,31 @@
           <div class="focus-timer-body" id="focusTimerBody">
             <div class="focus-timer-idle" id="focusIdle">
               <p>选择一个任务开始专注</p>
+              <label class="focus-task-search-label" for="focusTaskSearch">按标题搜索</label>
+              <input id="focusTaskSearch" class="focus-task-search" type="search" placeholder="搜索已加载任务标题..." autocomplete="off" aria-controls="focusTaskSelect" />
               <div class="focus-task-select">
                 <select id="focusTaskSelect">
                   <option value="">选择任务...</option>
                 </select>
                 <button id="focusStartBtn" type="button" class="primary" style="height: var(--input-h);">专注</button>
+                <button id="focusEstimatedStartBtn" type="button" class="ghost" aria-describedby="focusEstimatedStartHelp" disabled>按任务估时开始</button>
               </div>
+              <p id="focusTaskLoadError" class="focus-start-error" role="alert" aria-live="assertive" hidden></p>
+              <p id="focusEstimatedStartHelp" class="focus-estimate-start-help" role="status" aria-live="polite">请先选择一个任务。</p>
+              <p id="focusStartError" class="focus-start-error" role="alert" aria-live="assertive" hidden></p>
               <div class="focus-duration-select">
                 <button type="button" class="focus-dur-btn active" data-min="25">25 分钟</button>
                 <button type="button" class="focus-dur-btn" data-min="45">45 分钟</button>
                 <button type="button" class="focus-dur-btn" data-min="60">60 分钟</button>
               </div>
+            </div>
+            <div class="focus-recovery hidden" id="focusRecovery" role="region" aria-live="polite" aria-labelledby="focusRecoveryMessage">
+              <p id="focusRecoveryMessage"></p>
+              <div class="focus-recovery-actions" id="focusRecoveryActions">
+                <button type="button" id="focusRecoveryContinue" class="primary">按已保存时长继续</button>
+                <button type="button" id="focusRecoveryInterrupt" class="danger">以已确认时长标记中断</button>
+              </div>
+              <button type="button" id="focusRecoveryRetry" class="primary hidden">重试保存已确认时长</button>
             </div>
             <div class="focus-timer-running hidden" id="focusRunning">
               <div class="focus-countdown" id="focusCountdown">25:00</div>
@@ -142,14 +179,22 @@
             <div class="focus-timer-break hidden" id="focusBreak">
               <div class="focus-break-emoji">☕</div>
               <p>专注完成！休息一下</p>
+              <p class="focus-break-task" id="focusBreakTask"></p>
               <div class="focus-break-timer" id="focusBreakCountdown">05:00</div>
+              <p class="focus-break-start-error" id="focusBreakStartError" role="alert" aria-live="assertive" hidden></p>
               <div class="focus-actions">
+                <button type="button" id="focusBreakStartBtn" class="primary">再专注一轮（25分钟）</button>
                 <button type="button" id="focusSkipBreakBtn" class="">跳过休息</button>
                 <button type="button" id="focusDoneBtn" class="primary">完成</button>
               </div>
             </div>
           </div>
           <div class="focus-timer-stats" id="focusStats"></div>
+          <section class="focus-session-history" aria-labelledby="focusSessionHistoryHeading">
+            <h3 class="focus-session-history-title" id="focusSessionHistoryHeading">最近专注</h3>
+            <ul class="focus-session-history-list" id="focusSessionHistoryList" aria-label="最近专注记录"></ul>
+            <p class="focus-session-history-message" id="focusSessionHistoryMessage" data-state="loading" role="status" aria-live="polite">正在加载最近专注…</p>
+          </section>
         </div>
 
         <details class="config-panel">
@@ -204,6 +249,50 @@
             <label>提醒间隔（小时）
               <input id="configHeartbeatInterval" type="number" min="1" max="24" value="4" />
             </label>
+            <div class="config-divider"></div>
+            <h4 class="config-section-title">城市与天气</h4>
+            <label>默认城市
+              <input id="configCityInput" type="search" autocomplete="off" placeholder="搜索城市，例如：巴黎、东京" aria-controls="configCityResults" />
+            </label>
+            <div id="configCityResults" class="city-results" role="listbox" aria-label="城市搜索结果"></div>
+            <div class="city-actions">
+              <button type="button" id="configCityTest" class="ghost">测试这个城市天气</button>
+              <button type="button" id="configCitySave" class="primary">设为默认城市</button>
+            </div>
+            <p id="configCityStatus" class="preference-status muted" role="status" aria-live="polite">搜索并选择一个城市后，可测试天气并同步默认城市到账户。</p>
+            <div class="config-divider"></div>
+            <h4 class="config-section-title">界面风格</h4>
+            <label>选择一种色调
+              <select id="configThemeSelect" data-theme-select>
+                <option value="paper">纸页 · 暖白</option>
+                <option value="ink">墨色 · 夜读</option>
+                <option value="sage">苔绿 · 静谧</option>
+                <option value="midnight">午夜 · 冷蓝</option>
+                <option value="custom">我的安全配色</option>
+              </select>
+            </label>
+            <div class="theme-import-row">
+              <button type="button" id="configThemeImportButton" class="ghost">导入配色 JSON（可选）</button>
+              <input id="configThemeImportFile" type="file" accept="application/json,.json" hidden />
+            </div>
+            <p id="configThemeStatus" class="preference-status muted" role="status" aria-live="polite">自定义导入只接受白名单颜色值，不会执行 HTML、CSS 或 JavaScript。</p>
+            <div class="config-divider"></div>
+            <h4 class="config-section-title">背景</h4>
+            <label>公开图片 URL（可同步到其他设备）
+              <input id="configBgUrl" type="url" placeholder="https://example.com/photo.jpg" />
+            </label>
+            <div class="background-upload-row">
+              <label class="upload-button">从本机选择图片
+                <input id="configBgFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+              </label>
+              <span>只存此浏览器，不上传或占用服务器磁盘；暂不能同步云端。</span>
+            </div>
+            <label>背景透明度（0-100）
+              <input id="configBgOpacity" type="range" min="0" max="100" value="15" />
+            </label>
+            <button type="button" id="configBgApply" class="ghost">应用背景</button>
+            <button type="button" id="configBgClear" class="ghost">清除背景</button>
+            <p class="background-status muted" id="configBgStatus" role="status" aria-live="polite"></p>
             <button id="configSaveButton" class="primary">保存设置</button>
           </div>
         </details>
@@ -248,6 +337,10 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span>设置</span>
         </button>
+        <a class="mobile-nav-item" href="#focusTimer" aria-label="专注">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+          <span>专注</span>
+        </a>
       </div>
     </nav>
 
@@ -339,15 +432,49 @@
             <input id="mobileConfigHeartbeatInterval" type="number" min="1" max="24" value="4" />
           </label>
           <div class="config-divider"></div>
-          <h4 class="config-section-title">外观</h4>
-          <label>背景图片 URL
-            <input id="mobileConfigBgUrl" type="text" placeholder="https://... 或留空" />
+          <h4 class="config-section-title">城市与天气</h4>
+          <label>默认城市
+            <input id="mobileConfigCityInput" type="search" autocomplete="off" placeholder="搜索城市，例如：巴黎、东京" aria-controls="mobileConfigCityResults" />
           </label>
+          <div id="mobileConfigCityResults" class="city-results" role="listbox" aria-label="城市搜索结果"></div>
+          <div class="city-actions">
+            <button type="button" id="mobileConfigCityTest" class="ghost">测试这个城市天气</button>
+            <button type="button" id="mobileConfigCitySave" class="primary">设为默认城市</button>
+          </div>
+          <p id="mobileConfigCityStatus" class="preference-status muted" role="status" aria-live="polite">搜索并选择一个城市后，可测试天气并同步默认城市到账户。</p>
+          <div class="config-divider"></div>
+          <h4 class="config-section-title">界面风格</h4>
+          <label>选择一种色调
+            <select id="mobileConfigThemeSelect" data-theme-select>
+              <option value="paper">纸页 · 暖白</option>
+              <option value="ink">墨色 · 夜读</option>
+              <option value="sage">苔绿 · 静谧</option>
+              <option value="midnight">午夜 · 冷蓝</option>
+              <option value="custom">我的安全配色</option>
+            </select>
+          </label>
+          <div class="theme-import-row">
+            <button type="button" id="mobileConfigThemeImportButton" class="ghost">导入配色 JSON（可选）</button>
+            <input id="mobileConfigThemeImportFile" type="file" accept="application/json,.json" hidden />
+          </div>
+          <p id="mobileConfigThemeStatus" class="preference-status muted" role="status" aria-live="polite">自定义导入只接受白名单颜色值，不会执行 HTML、CSS 或 JavaScript。</p>
+          <div class="config-divider"></div>
+          <h4 class="config-section-title">背景</h4>
+          <label>公开图片 URL（可同步到其他设备）
+            <input id="mobileConfigBgUrl" type="text" placeholder="https://example.com/photo.jpg" />
+          </label>
+          <div class="background-upload-row">
+            <label class="upload-button">从本机选择图片
+              <input id="mobileConfigBgFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+            </label>
+            <span>只存此浏览器，不上传或占用服务器磁盘；暂不能同步云端。</span>
+          </div>
           <label>背景透明度（0-100）
             <input id="mobileConfigBgOpacity" type="range" min="0" max="100" value="15" />
           </label>
           <button type="button" id="mobileConfigBgApply" class="ghost">应用背景</button>
           <button type="button" id="mobileConfigBgClear" class="ghost">清除背景</button>
+          <p class="background-status muted" id="mobileConfigBgStatus" role="status" aria-live="polite"></p>
           <button id="mobileConfigSaveButton" class="primary">保存设置</button>
         </div>
       </div>
@@ -397,21 +524,31 @@
         </div>
       </form>
     </dialog>
+<dialog id="attachmentDialog">
+<div class="edit-form attachment-form">
+<h3 id="attachmentTitle">任务附件</h3>
+<p id="attachmentNotice" class="attachment-notice"></p>
+<label>添加附件（图片或 PDF，单个不超过 8 MiB）
+<input type="file" id="attachmentFile" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" multiple />
+</label>
+<div id="attachmentList" class="attachment-list"></div>
+<div id="attachmentStatus" class="attachment-status" role="status"></div>
+<div class="edit-actions">
+<button type="button" id="attachmentCloseButton">关闭</button>
+</div>
+</div>
+</dialog>
 
     <dialog id="postponeDialog">
       <form method="dialog" class="edit-form">
         <h3>推迟任务</h3>
         <input type="hidden" id="postponeTaskId" />
-        <label>推迟天数 <input id="postponeDays" type="number" min="1" max="365" value="3" /></label>
-        <div class="postpone-options">
-          <button type="button" class="postpone-option" data-days="1">1 天</button>
-          <button type="button" class="postpone-option" data-days="3">3 天</button>
-          <button type="button" class="postpone-option" data-days="7">1 周</button>
-          <button type="button" class="postpone-option" data-days="30">1 个月</button>
-        </div>
+        <p id="postponeCurrentDue">顺延现有截止日 1 天。</p>
+        <p id="postponeFeedback" role="alert" aria-live="polite"></p>
         <div class="edit-actions">
           <button type="button" id="postponeCancelButton">取消</button>
-          <button type="submit" class="primary">确定推迟</button>
+          <button type="button" id="postponeRetryButton" class="ghost" aria-label="使用原顺延请求再试" hidden>使用原请求再试</button>
+          <button type="submit" id="postponeSubmitButton" class="primary">顺延 1 天</button>
         </div>
       </form>
     </dialog>

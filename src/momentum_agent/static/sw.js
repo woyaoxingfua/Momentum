@@ -1,4 +1,4 @@
-const CACHE_NAME = "momentum-v1";
+const CACHE_NAME = "momentum-v7";
 
 const PRECACHE_ASSETS = [
   "/",
@@ -20,8 +20,14 @@ const PRECACHE_JS = [
   "/js/config.js",
   "/js/heartbeat.js",
   "/js/focus.js",
+  "/js/focus-clock.mjs",
+  "/js/focus-recovery.mjs",
+  "/js/task-completion-action.mjs",
   "/js/stats.js",
   "/js/notifications.js",
+  "/js/appearance.mjs",
+  "/js/background.mjs",
+  "/js/city.mjs",
 ];
 
 self.addEventListener("install", (event) => {
@@ -74,7 +80,7 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(() =>
-          caches.match(request).then((cached) => cached || caches.match("/"))
+          caches.match(request).then((cached) => cached || caches.match("/app"))
         )
     );
     return;

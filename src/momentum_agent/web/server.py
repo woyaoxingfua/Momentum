@@ -32,6 +32,16 @@ def _require_auth(handler: MomentumHandler):
 
 
 MAX_REQUEST_BODY = 2 * 1024 * 1024  # 2MB
+MAX_BACKUP_SIZE_BYTES = 16 * 1024 * 1024  # 16 MiB for /api/import and /api/export
+
+
+class _RequestBodyTooLarge(Exception):
+    """Raised when a request exceeds the configured body limit."""
+
+    def __init__(self, max_bytes: int) -> None:
+        super().__init__(max_bytes)
+        self.max_bytes = max_bytes
+
 
 class MomentumHandler(BaseHTTPRequestHandler):
     database_url: str
@@ -59,16 +69,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
         self._last_status = status.value
         super().send_error(status)
 
-    def read_json(self) -> dict[str, object]:
+    def read_json(self, *, max_body_size: int = MAX_REQUEST_BODY) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0"))
         if length == 0:
             return {}
-        if length > MAX_REQUEST_BODY:
-            self.send_json(
-                {"error": f"请求体过大，最大 {MAX_REQUEST_BODY // 1024 // 1024}MB"},
-                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
-            )
-            return {}
+        if length > max_body_size:
+            raise _RequestBodyTooLarge(max_body_size)
         raw = self.rfile.read(length).decode("utf-8")
         try:
             value = json.loads(raw)
@@ -105,7 +111,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
             filename = os.path.basename(path)
             if not filename or ".." in filename or filename.startswith("."):
                 return False
-            if not filename.endswith(".js"):
+            if not filename.endswith((".js", ".mjs")):
                 return False
             handlers.send_static(self, f"js/{filename}", "text/javascript; charset=utf-8")
             return True
@@ -119,6 +125,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/heartbeat/config": _handlers.handle_get_heartbeat_config,
         "/api/heartbeat/suggestion": _handlers.handle_get_heartbeat_suggestion,
         "/api/user/location": _handlers.handle_get_user_location,
+        "/api/preferences": _handlers.handle_get_preferences,
         "/api/export": _handlers.handle_export,
         "/api/advice": _handlers.handle_advice,
         "/api/review": _handlers.handle_review,
@@ -152,12 +159,14 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/batch/add-tags": _handlers.handle_batch_add_tags,
         "/api/heartbeat/config": _handlers.handle_set_heartbeat_config,
         "/api/user/location": _handlers.handle_set_user_location,
+        "/api/preferences": _handlers.handle_set_preferences,
         "/api/chat": _handlers.handle_chat,
         "/api/chat/stream": _handlers.handle_chat_stream,
         "/api/chat/clear": _handlers.handle_chat_clear,
         "/api/config": _handlers.handle_set_config,
         "/api/import": _handlers.handle_import,
         "/api/focus/start": _handlers.handle_start_focus,
+        "/api/focus/finish": _handlers.handle_finish_focus,
     }
 
     POST_PREFIX_ROUTES = {
@@ -205,6 +214,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
                     self._handlers.handle_get_weather(self, user_id, parsed)
                 elif path == "/api/location":
                     self._handlers.handle_get_location(self, user_id, parsed)
+                elif path == "/api/cities/search":
+                    self._handlers.handle_search_cities(self, parsed)
                 elif path == "/api/me":
                     self.send_json({"user_id": user_id})
                 elif path == "/api/provider":
@@ -257,6 +268,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
                         self.send_error(HTTPStatus.NOT_FOUND)
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
+            except _RequestBodyTooLarge as exc:
+                self.close_connection = True
+                self.send_json(
+                    {"error": f"请求体过大，最大 {exc.max_bytes // 1024 // 1024} MiB ({exc.max_bytes:,} bytes)"},
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                )
             except Exception as exc:
                 log.exception("POST %s failed", parsed.path)
                 try:
@@ -286,6 +303,12 @@ class MomentumHandler(BaseHTTPRequestHandler):
                     handlers.handle_edit_task(self, path, user_id)
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
+            except _RequestBodyTooLarge as exc:
+                self.close_connection = True
+                self.send_json(
+                    {"error": f"请求体过大，最大 {exc.max_bytes // 1024 // 1024} MiB ({exc.max_bytes:,} bytes)"},
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                )
             except Exception as exc:
                 log.exception("PUT %s failed", parsed.path)
                 try:

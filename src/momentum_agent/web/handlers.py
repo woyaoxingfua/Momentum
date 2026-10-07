@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from http import HTTPStatus
 from importlib.resources import files
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 if TYPE_CHECKING:
     from .server import MomentumHandler
@@ -77,18 +78,38 @@ def handle_create_plan(handler: MomentumHandler, user_id: str) -> None:
 
 
 def handle_done_task(handler: MomentumHandler, path: str, user_id: str) -> None:
+    import uuid
     from .utils import extract_task_id
+
+    supplied_key = handler.headers.get("Idempotency-Key")
+    if not supplied_key:
+        handler.send_json({"error": "idempotency_key_required"}, HTTPStatus.BAD_REQUEST)
+        return
+    try:
+        parsed_key = uuid.UUID(supplied_key)
+    except (AttributeError, TypeError, ValueError):
+        parsed_key = None
+    if parsed_key is None or parsed_key.version != 4 or str(parsed_key) != supplied_key.lower():
+        handler.send_json({"error": "idempotency_key_invalid"}, HTTPStatus.BAD_REQUEST)
+        return
+
     task_id = extract_task_id(handler, path, "done")
     if task_id is None:
         return
-    store = handler.store
-    next_task = store.complete_recurring_task(task_id, user_id=user_id)
-    if next_task and next_task.recurrence:
-        handler.send_json({"message": f"已创建下一期任务 #{next_task.id}：{next_task.title}"})
-    elif next_task:
-        handler.send_json({"message": f"已完成任务 #{next_task.id}：{next_task.title}"})
-    else:
-        handler.send_json({"error": "没有找到这个任务。"}, HTTPStatus.NOT_FOUND)
+    canonical_request = json.dumps(
+        {"method": "POST", "task_id": task_id},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    fingerprint = hashlib.sha256(canonical_request).hexdigest()
+    status, response = handler.store.complete_task_idempotent(
+        task_id,
+        user_id=user_id,
+        idempotency_key=str(parsed_key),
+        request_fingerprint=fingerprint,
+    )
+    handler.send_json(response, HTTPStatus(status))
 
 
 def handle_edit_task(handler: MomentumHandler, path: str, user_id: str) -> None:
@@ -98,6 +119,9 @@ def handle_edit_task(handler: MomentumHandler, path: str, user_id: str) -> None:
     except (IndexError, ValueError):
         handler.send_json({"error": "任务 ID 无效。"}, HTTPStatus.BAD_REQUEST)
         return
+    if handler.store.get_task_for_user(task_id, user_id) is None:
+        handler.send_json({"error": "没有找到这个任务。"}, HTTPStatus.NOT_FOUND)
+        return
     payload = handler.read_json()
     message = edit_task_from_params(
         handler.store, task_id,
@@ -105,18 +129,48 @@ def handle_edit_task(handler: MomentumHandler, path: str, user_id: str) -> None:
         priority=payload.get("priority"), estimated_minutes=payload.get("estimated_minutes"),
         notes=payload.get("notes"), tags=payload.get("tags"), user_id=user_id,
     )
+    if message.startswith("没有找到任务 #"):
+        handler.send_json({"error": "没有找到这个任务。"}, HTTPStatus.NOT_FOUND)
+        return
     handler.send_json({"message": message})
 
 
 def handle_postpone_task(handler: MomentumHandler, path: str, user_id: str) -> None:
-    from ..agent_app import postpone_task_cmd
+    import uuid
     from .utils import extract_task_id
+
+    supplied_key = handler.headers.get("Idempotency-Key")
+    if not supplied_key:
+        handler.send_json({"error": "idempotency_key_required"}, HTTPStatus.BAD_REQUEST)
+        return
+    try:
+        parsed_key = uuid.UUID(supplied_key)
+    except (AttributeError, TypeError, ValueError):
+        parsed_key = None
+    if parsed_key is None or parsed_key.version != 4 or str(parsed_key) != supplied_key.lower():
+        handler.send_json({"error": "idempotency_key_invalid"}, HTTPStatus.BAD_REQUEST)
+        return
+
     task_id = extract_task_id(handler, path, "postpone")
     if task_id is None:
         return
     payload = handler.read_json()
-    days = int(payload.get("days", 3))
-    handler.send_json({"message": postpone_task_cmd(handler.store, task_id, days, user_id=user_id)})
+    days = payload.get("days", 3)
+    canonical_request = json.dumps(
+        {"method": "POST", "task_id": task_id, "days": days},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    fingerprint = hashlib.sha256(canonical_request).hexdigest()
+    status, response = handler.store.postpone_task_idempotent(
+        task_id,
+        days,
+        user_id=user_id,
+        idempotency_key=str(parsed_key),
+        request_fingerprint=fingerprint,
+    )
+    handler.send_json(response, HTTPStatus(status))
 
 
 def handle_drop_task(handler: MomentumHandler, path: str, user_id: str) -> None:
@@ -312,12 +366,119 @@ def handle_chat_clear(handler: MomentumHandler, user_id: str) -> None:
 
 def handle_advice(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import local_advice
-    handler.send_json({"advice": local_advice(handler.store, user_id=user_id)})
+    from ..agent_app import _read_preferences
+    from ..context import build_user_context, ranked_tasks
+    from ..models import TaskStatus
+
+    advice = local_advice(handler.store, user_id=user_id)
+    tasks = handler.store.list_tasks(status=None, user_id=user_id)
+    open_tasks = [task for task in tasks if task.status in (TaskStatus.TODO, TaskStatus.DOING)]
+    suggestion = None
+    if open_tasks:
+        context = build_user_context(open_tasks, **_read_preferences(handler.store, user_id=user_id))
+        task = ranked_tasks(open_tasks, context)[0]
+        suggestion = {
+            "task_id": task.id,
+            "title": task.title,
+            "status": task.status.value,
+            "estimated_minutes": task.estimated_minutes,
+        }
+    handler.send_json({"advice": advice, "suggestion": suggestion})
 
 
 def handle_review(handler: MomentumHandler, user_id: str) -> None:
     from ..agent_app import local_review
-    handler.send_json({"review": local_review(handler.store, user_id=user_id)})
+    from datetime import date, datetime, time, timedelta, timezone
+    import json
+    import re
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    from ..storage.focus_utils import parse_timestamp
+
+    query = parse_qs(urlsplit(getattr(handler, "path", "/api/review")).query, keep_blank_values=True)
+    zone_values = query.get("timeZone", [])
+    date_values = query.get("localDate", [])
+    if len(zone_values) != 1 or len(date_values) != 1:
+        handler.send_json({"error": "请提供唯一的 timeZone 和 localDate 参数"}, HTTPStatus.BAD_REQUEST)
+        return
+    zone_key, local_date_raw = zone_values[0], date_values[0]
+    if not zone_key or len(zone_key) > 128 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", local_date_raw):
+        handler.send_json({"error": "时区或日期格式无效"}, HTTPStatus.BAD_REQUEST)
+        return
+    try:
+        zone = ZoneInfo(zone_key)
+        local_date = date.fromisoformat(local_date_raw)
+        if local_date.isoformat() != local_date_raw:
+            raise ValueError("non-canonical date")
+        next_date = local_date + timedelta(days=1)
+        day_start = datetime.combine(local_date, time.min, tzinfo=zone).astimezone(timezone.utc)
+        day_end = datetime.combine(next_date, time.min, tzinfo=zone).astimezone(timezone.utc)
+    except (ValueError, ZoneInfoNotFoundError, OverflowError):
+        handler.send_json({"error": "时区或日期无效"}, HTTPStatus.BAD_REQUEST)
+        return
+
+    snapshot = handler.store.get_review_data(user_id=user_id)
+    completed_events = []
+    last_status_by_task = {}
+    status_events = sorted(snapshot["status_events"], key=lambda event: event.get("event_id", 0))
+    for event in status_events:
+        task_id = event["task_id"]
+        status_value = event.get("status_value")
+        if status_value not in {"todo", "doing", "done", "dropped"}:
+            continue
+        previous_status = last_status_by_task.get(task_id)
+        last_status_by_task[task_id] = status_value
+        if status_value != "done" or previous_status == "done":
+            continue
+        completed_at = parse_timestamp(event.get("completed_at"))
+        if completed_at is None or not day_start <= completed_at < day_end:
+            continue
+        completed_events.append({
+            "task_id": task_id,
+            "completed_at": completed_at.isoformat(),
+            "title": event["title"],
+            "estimated_minutes_reference": event.get("estimated_minutes_reference"),
+            "_sort_at": completed_at,
+        })
+    completed_events.sort(key=lambda item: (item["_sort_at"], item["task_id"]))
+    for event in completed_events:
+        del event["_sort_at"]
+
+    total_actual_seconds = 0
+    focus_session_count = 0
+    for session in snapshot["focus_sessions"]:
+        try:
+            payload = json.loads(session.get("payload") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        raw_seconds = payload.get("actual_seconds")
+        if isinstance(raw_seconds, bool) or not isinstance(raw_seconds, (int, str)):
+            continue
+        try:
+            if isinstance(raw_seconds, str) and not re.fullmatch(r"\d+", raw_seconds):
+                continue
+            actual_seconds = int(raw_seconds)
+        except (TypeError, ValueError):
+            continue
+        if actual_seconds < 0:
+            continue
+        ended_at = parse_timestamp(payload.get("ended_at"))
+        if ended_at is None or not day_start <= ended_at < day_end:
+            continue
+        total_actual_seconds += actual_seconds
+        focus_session_count += 1
+
+    handler.send_json({
+        "review": local_review(handler.store, user_id=user_id),
+        "timeZone": zone_key,
+        "localDate": local_date_raw,
+        "dayStartUtc": day_start.isoformat(),
+        "dayEndUtcExclusive": day_end.isoformat(),
+        "completed_count": len(completed_events),
+        "completed_events": completed_events,
+        "today_focus_actual_seconds": total_actual_seconds,
+        "today_focus_session_count": focus_session_count,
+        "focus_attribution_note": "专注时长按 ended_at 所在本地日整段归属，不跨日拆分；只统计带 ended_at 和 actual_seconds 的会话，不用预估时长补值。",
+    })
 
 
 def handle_provider(handler: MomentumHandler, user_id: str) -> None:
@@ -358,8 +519,18 @@ def handle_provider_models(handler: MomentumHandler, user_id: str) -> None:
 # ── 导出导入 ──────────────────────────────────────────────────────
 
 def handle_export(handler: MomentumHandler, user_id: str) -> None:
+    from .server import MAX_BACKUP_SIZE_BYTES
+
     data = handler.store.export_user_data(user_id=user_id)
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    if len(body) > MAX_BACKUP_SIZE_BYTES:
+        handler.close_connection = True
+        max_mib = MAX_BACKUP_SIZE_BYTES // 1024 // 1024
+        handler.send_json(
+            {"error": f"导出备份过大，序列化后最大为 {max_mib} MiB ({MAX_BACKUP_SIZE_BYTES:,} bytes)"},
+            HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        )
+        return
     handler._last_status = 200
     handler.send_response(HTTPStatus.OK)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
@@ -370,16 +541,34 @@ def handle_export(handler: MomentumHandler, user_id: str) -> None:
 
 
 def handle_import(handler: MomentumHandler, user_id: str) -> None:
-    payload = handler.read_json()
-    data = payload.get("data")
-    if not data or not isinstance(data, dict):
+    from ..storage.backup import BackupError, BackupNotEmptyError
+    from .server import MAX_BACKUP_SIZE_BYTES
+
+    payload = handler.read_json(max_body_size=MAX_BACKUP_SIZE_BYTES)
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict) or not data:
         handler.send_json({"error": "请提供 JSON 数据。"}, HTTPStatus.BAD_REQUEST)
         return
     try:
-        n = handler.store.import_user_data(data, user_id=user_id)
-        handler.send_json({"message": f"已导入 {n} 个任务。"})
-    except Exception as exc:
+        if data.get("version") == "2.0":
+            result = handler.store.restore_user_data(data, user_id=user_id)
+            handler.send_json({
+                "message": f"已恢复 {result['imported_tasks']} 个任务。",
+                "excluded_events": result["excluded_events"],
+                "excluded_memory": result["excluded_memory"],
+            })
+            return
+        result = handler.store.import_user_data_with_summary(data, user_id=user_id)
+        handler.send_json({
+            "message": f"已导入 {result['imported_tasks']} 个任务。",
+            "excluded_memory": result["excluded_memory"],
+        })
+    except BackupNotEmptyError as exc:
+        handler.send_json({"error": f"恢复失败：{exc}"}, HTTPStatus.CONFLICT)
+    except BackupError as exc:
         handler.send_json({"error": f"导入失败：{exc}"}, HTTPStatus.BAD_REQUEST)
+    except Exception:
+        handler.send_json({"error": "导入失败：备份未写入，请稍后重试。"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
 
 # ── 标签 ──────────────────────────────────────────────────────────
@@ -476,25 +665,36 @@ def handle_get_heartbeat_suggestion(handler: MomentumHandler, user_id: str) -> N
 
 def handle_get_weather(handler: MomentumHandler, user_id: str, parsed) -> None:
     from ..services import weather as w
-    from datetime import datetime
     query = parse_qs(parsed.query)
     city = query.get("city", [None])[0]
     if not city:
         saved_city = handler.store.get_memory("user_location", user_id=user_id)
         city = saved_city or "北京"
-    data = w.get_weather(city)
-    loc = w.get_location(city)
+        country = handler.store.get_memory("user_location_country", user_id=user_id)
+        if country and city not in w.CITIES and city.casefold() not in w.ALIASES:
+            city = f"{city}, {country}"
+    try:
+        data = w.get_weather(city)
+    except w.CityNotFoundError as exc:
+        handler.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+        return
+    except w.WeatherServiceError as exc:
+        handler.send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+        return
     handler.send_json({
         "city": data["city"],
-        "country": "",
+        "country": data["country"],
         "temperature": data["temperature"],
+        "humidity": data["humidity"],
         "condition": data["condition"],
         "condition_cn": data["condition_cn"],
         "emoji": data["emoji"],
         "recommendations": data["tips"],
-        "latitude": loc["latitude"],
-        "longitude": loc["longitude"],
-        "updated_at": datetime.now().isoformat(),
+        "latitude": data["latitude"],
+        "longitude": data["longitude"],
+        "weather_code": data["weather_code"],
+        "source": data["source"],
+        "updated_at": data["updated_at"],
     })
 
 
@@ -505,10 +705,20 @@ def handle_get_location(handler: MomentumHandler, user_id: str, parsed) -> None:
     if not city:
         saved_city = handler.store.get_memory("user_location", user_id=user_id)
         city = saved_city or "北京"
-    info = w.get_location(city)
+        country = handler.store.get_memory("user_location_country", user_id=user_id)
+        if country and city not in w.CITIES and city.casefold() not in w.ALIASES:
+            city = f"{city}, {country}"
+    try:
+        info = w.get_location(city)
+    except w.CityNotFoundError as exc:
+        handler.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+        return
+    except w.WeatherServiceError as exc:
+        handler.send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+        return
     handler.send_json({
         "city": info["city"],
-        "country": "",
+        "country": info["country"],
         "latitude": info["latitude"],
         "longitude": info["longitude"],
     })
@@ -516,20 +726,140 @@ def handle_get_location(handler: MomentumHandler, user_id: str, parsed) -> None:
 
 def handle_get_user_location(handler: MomentumHandler, user_id: str) -> None:
     city = handler.store.get_memory("user_location", user_id=user_id)
+    country = handler.store.get_memory("user_location_country", user_id=user_id) or ""
     if not city:
-        handler.send_json({"city": "北京", "is_default": True})
+        handler.send_json({"city": "北京", "country": "", "is_default": True})
     else:
-        handler.send_json({"city": city, "is_default": False})
+        handler.send_json({"city": city, "country": country, "is_default": False})
 
 
 def handle_set_user_location(handler: MomentumHandler, user_id: str) -> None:
     payload = handler.read_json()
-    city = payload.get("city")
+    city = str(payload.get("city") or "").strip()
+    country = str(payload.get("country") or "").strip()
     if not city:
         handler.send_json({"error": "需要提供城市名称"}, HTTPStatus.BAD_REQUEST)
         return
+    if len(city) > 160 or len(country) > 100:
+        handler.send_json({"error": "城市名称或国家名称过长"}, HTTPStatus.BAD_REQUEST)
+        return
+    coordinates = {}
+    for key, low, high in (("latitude", -90, 90), ("longitude", -180, 180)):
+        value = payload.get(key)
+        if value is not None:
+            try:
+                number = float(value)
+                if not low <= number <= high:
+                    raise ValueError
+                coordinates[key] = str(number)
+            except (TypeError, ValueError):
+                handler.send_json({"error": "城市坐标无效"}, HTTPStatus.BAD_REQUEST)
+                return
     handler.store.set_memory("user_location", city, user_id=user_id)
-    handler.send_json({"message": f"已设置默认位置为：{city}", "city": city})
+    handler.store.set_memory("user_location_country", country, user_id=user_id)
+    for key, value in coordinates.items():
+        handler.store.set_memory(f"user_location_{key}", value, user_id=user_id)
+    handler.send_json({"message": f"已设置默认位置为：{city}", "city": city, "country": country})
+
+
+def handle_search_cities(handler: MomentumHandler, parsed) -> None:
+    from ..services import weather as w
+    query = parse_qs(parsed.query).get("q", [""])[0].strip()
+    if len(query) < 2:
+        handler.send_json({"cities": []})
+        return
+    if len(query) > 100:
+        handler.send_json({"error": "城市搜索内容不能超过 100 个字符"}, HTTPStatus.BAD_REQUEST)
+        return
+    try:
+        handler.send_json({"cities": w.search_cities(query)})
+    except w.WeatherServiceError as exc:
+        handler.send_json({"error": f"城市搜索暂不可用：{exc}"}, HTTPStatus.BAD_GATEWAY)
+
+
+def _validate_synced_background_url(value: object) -> str:
+    from ipaddress import ip_address
+    from urllib.parse import urlsplit
+
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 2000:
+        raise ValueError("公开图片 URL 不能为空且不能超过 2000 个字符")
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("背景图片只接受无账号密码的 HTTP(S) URL")
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith((".localhost", ".local")):
+        raise ValueError("背景图片 URL 必须指向公开主机")
+    try:
+        address = ip_address(host)
+        if not address.is_global:
+            raise ValueError("背景图片 URL 必须指向公开主机")
+    except ValueError as exc:
+        if "公开主机" in str(exc):
+            raise
+        # A non-IP DNS host is expected; its image is fetched by the browser, not this server.
+    return raw
+
+
+def handle_get_preferences(handler: MomentumHandler, user_id: str) -> None:
+    store = handler.store
+    source = store.get_memory("background_source", user_id=user_id)
+    url = store.get_memory("background_url", user_id=user_id) or ""
+    opacity = store.get_memory("background_opacity", user_id=user_id) or "15"
+    theme = store.get_memory("ui_theme", user_id=user_id) or "paper"
+    handler.send_json({
+        "theme": theme,
+        "background": {
+            "configured": source is not None,
+            "source": source,
+            "url": url if source == "remote_url" else "",
+            "opacity": opacity,
+        },
+    })
+
+
+def handle_set_preferences(handler: MomentumHandler, user_id: str) -> None:
+    payload = handler.read_json()
+    unknown = set(payload) - {"theme", "background"}
+    if unknown:
+        handler.send_json({"error": "偏好设置包含不支持的字段"}, HTTPStatus.BAD_REQUEST)
+        return
+    store = handler.store
+    theme = None
+    background_values = None
+    if "theme" in payload:
+        theme = str(payload.get("theme") or "")
+        if theme not in {"paper", "ink", "sage", "midnight"}:
+            handler.send_json({"error": "不支持的账户主题"}, HTTPStatus.BAD_REQUEST)
+            return
+    if "background" in payload:
+        background = payload.get("background")
+        if not isinstance(background, dict) or set(background) - {"source", "url", "opacity"}:
+            handler.send_json({"error": "背景设置格式无效"}, HTTPStatus.BAD_REQUEST)
+            return
+        source = str(background.get("source") or "")
+        if source not in {"remote_url", "local", "none"}:
+            handler.send_json({"error": "不支持的背景来源"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            opacity = int(background.get("opacity", 15))
+            if not 0 <= opacity <= 100:
+                raise ValueError
+            url = _validate_synced_background_url(background.get("url")) if source == "remote_url" else ""
+            if source != "remote_url" and background.get("url"):
+                raise ValueError("本地图片内容或 data URL 不会保存到服务器")
+        except (TypeError, ValueError) as exc:
+            handler.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        background_values = (source, url, str(opacity))
+    if theme is not None:
+        store.set_memory("ui_theme", theme, user_id=user_id)
+    if background_values is not None:
+        source, url, opacity = background_values
+        store.set_memory("background_source", source, user_id=user_id)
+        store.set_memory("background_url", url, user_id=user_id)
+        store.set_memory("background_opacity", opacity, user_id=user_id)
+    handler.send_json({"message": "偏好已保存", "theme": store.get_memory("ui_theme", user_id=user_id) or "paper"})
 
 
 # ── 子任务 ──────────────────────────────────────────────────────
@@ -696,23 +1026,173 @@ def handle_is_task_blocked(handler: MomentumHandler, path: str, user_id: str) ->
 
 # ── 专注计时 ──────────────────────────────────────────────────────
 
+def _get_focus_task(handler: MomentumHandler, task_id: int, user_id: str):
+    """Look up one task by authenticated owner; retain compatibility with test doubles."""
+    from ..models import Task
+
+    getter = getattr(handler.store, "get_task_for_user", None)
+    if callable(getter):
+        task = getter(task_id, user_id)
+        if task is None or isinstance(task, Task):
+            return task
+    return next(
+        (task for task in handler.store.list_tasks(status=None, user_id=user_id) if task.id == task_id),
+        None,
+    )
+
 def handle_start_focus(handler: MomentumHandler, user_id: str) -> None:
     """开始一个专注时段"""
+    import re
+    import uuid
+
     payload = handler.read_json()
-    task_id = payload.get("task_id")
-    duration_minutes = int(payload.get("duration_minutes", 25))
+    try:
+        raw_task_id = payload.get("task_id")
+        raw_duration = payload.get("duration_minutes", 25)
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, str))
+            or (isinstance(value, str) and not re.fullmatch(r"\d+", value))
+            for value in (raw_task_id, raw_duration)
+        ):
+            raise ValueError
+        task_id = int(raw_task_id)
+        duration_minutes = int(raw_duration)
+    except (TypeError, ValueError):
+        handler.send_json({"error": "请提供有效的任务和专注时长"}, HTTPStatus.BAD_REQUEST)
+        return
+    if task_id <= 0:
+        handler.send_json({"error": "任务 ID 无效"}, HTTPStatus.BAD_REQUEST)
+        return
     if duration_minutes < 1 or duration_minutes > 120:
         handler.send_json({"error": "时长需在 1-120 分钟之间"}, HTTPStatus.BAD_REQUEST)
         return
-    from ..web.utils import encode_dt
+
+    task = _get_focus_task(handler, task_id, user_id)
+    if task is None:
+        handler.send_json({"error": "未找到该任务"}, HTTPStatus.NOT_FOUND)
+        return
+    from ..models import TaskStatus
+    task_status = getattr(task, "status", TaskStatus.TODO)
+    task_status = getattr(task_status, "value", task_status)
+    if task_status not in {TaskStatus.TODO.value, TaskStatus.DOING.value}:
+        handler.send_json({"error": "task_not_open"}, HTTPStatus.CONFLICT)
+        return
+
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
-    handler.store.record_focus_session(task_id, duration_minutes, user_id=user_id)
     handler.send_json({
         "message": f"专注计时开始，{duration_minutes}分钟后提醒",
+        "session_id": uuid.uuid4().hex,
+        "task_id": task_id,
         "started_at": now.isoformat(),
         "duration_minutes": duration_minutes,
     })
+
+
+def handle_finish_focus(handler: MomentumHandler, user_id: str) -> None:
+    """保存已结束专注段的真实活动时长；暂停时间由客户端单调时钟排除。"""
+    import re
+    from datetime import datetime, timedelta, timezone
+
+    payload = handler.read_json()
+    try:
+        raw_task_id = payload.get("task_id")
+        raw_planned = payload.get("planned_minutes")
+        raw_actual = payload.get("actual_seconds")
+        if type(raw_actual) is not int:
+            raise ValueError
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, str))
+            or (isinstance(value, str) and not re.fullmatch(r"\d+", value))
+            for value in (raw_task_id, raw_planned)
+        ):
+            raise ValueError
+        task_id = int(raw_task_id)
+        planned_minutes = int(raw_planned)
+        actual_seconds = raw_actual
+        started_raw = payload.get("started_at")
+        if not isinstance(started_raw, str):
+            raise ValueError
+        started_at = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+        ended_raw = payload.get("ended_at")
+        if not isinstance(ended_raw, str) or not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+            ended_raw,
+        ):
+            raise ValueError
+        ended_at = datetime.fromisoformat(ended_raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        handler.send_json({"error": "专注记录参数无效，ended_at 必须是带时区的 RFC3339 时间"}, HTTPStatus.BAD_REQUEST)
+        return
+
+    session_id = payload.get("session_id")
+    outcome = payload.get("outcome")
+    if not isinstance(session_id, str) or not re.fullmatch(r"[0-9a-fA-F]{32}", session_id):
+        handler.send_json({"error": "专注会话 ID 无效"}, HTTPStatus.BAD_REQUEST)
+        return
+    if task_id <= 0 or planned_minutes < 1 or planned_minutes > 120:
+        handler.send_json({"error": "任务或计划时长无效"}, HTTPStatus.BAD_REQUEST)
+        return
+    if (
+        started_at.tzinfo is None
+        or ended_at.tzinfo is None
+        or started_at.utcoffset() is None
+        or ended_at.utcoffset() is None
+        or started_at.astimezone(timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=5)
+    ):
+        handler.send_json({"error": "专注开始时间无效"}, HTTPStatus.BAD_REQUEST)
+        return
+    if ended_at.astimezone(timezone.utc) < started_at.astimezone(timezone.utc):
+        handler.send_json({"error": "结束时间早于开始时间"}, HTTPStatus.BAD_REQUEST)
+        return
+    if ended_at.astimezone(timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=5):
+        handler.send_json({"error": "结束时间不能过度超前"}, HTTPStatus.BAD_REQUEST)
+        return
+    if outcome not in {"completed", "stopped"}:
+        handler.send_json({"error": "结束方式无效"}, HTTPStatus.BAD_REQUEST)
+        return
+    if actual_seconds < 0 or actual_seconds > planned_minutes * 60:
+        handler.send_json({"error": "实际时长超出计划范围"}, HTTPStatus.BAD_REQUEST)
+        return
+    if outcome == "completed" and actual_seconds != planned_minutes * 60:
+        handler.send_json({"error": "计时未到计划时长，不能标记为完成"}, HTTPStatus.BAD_REQUEST)
+        return
+
+    if _get_focus_task(handler, task_id, user_id) is None:
+        handler.send_json({"error": "未找到该任务"}, HTTPStatus.NOT_FOUND)
+        return
+
+    from ..storage.errors import FocusTaskNotFound, IdempotencyConflict
+    try:
+        result = handler.store.record_focus_session(
+            task_id,
+            planned_minutes,
+            user_id=user_id,
+            actual_seconds=actual_seconds,
+            planned_minutes=planned_minutes,
+            started_at=started_at,
+            ended_at=ended_at,
+            outcome=outcome,
+            session_id=session_id,
+        )
+    except IdempotencyConflict:
+        handler.send_json({"error": "idempotency_conflict"}, HTTPStatus.CONFLICT)
+        return
+    except FocusTaskNotFound:
+        handler.send_json({"error": "未找到该任务"}, HTTPStatus.NOT_FOUND)
+        return
+    canonical = result if isinstance(result, dict) else {
+        "task_id": task_id,
+        "session_id": session_id,
+        "started_at": started_at.astimezone(timezone.utc).isoformat(),
+        "ended_at": ended_at.astimezone(timezone.utc).isoformat(),
+        "planned_minutes": planned_minutes,
+        "actual_seconds": actual_seconds,
+        "outcome": outcome,
+    }
+    handler.send_json({"message": "实际专注时长已保存", **canonical})
 
 
 def handle_get_focus_stats(handler: MomentumHandler, user_id: str) -> None:
@@ -722,13 +1202,26 @@ def handle_get_focus_stats(handler: MomentumHandler, user_id: str) -> None:
     week_ago = now - timedelta(days=7)
     sessions = handler.store.get_focus_sessions(user_id=user_id)
     recent = [s for s in sessions if s["started_at"] >= week_ago]
-    total_minutes = sum(s.get("duration_minutes", 0) for s in recent)
-    total_sessions = len(recent)
+    actual_recent = [s for s in recent if s.get("actual_seconds") is not None]
+    legacy_recent = [s for s in recent if s.get("actual_seconds") is None]
+    local_today_start = now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_actual = [s for s in sessions if s.get("actual_seconds") is not None and s["started_at"] >= local_today_start]
+    total_minutes = round(sum(s.get("actual_seconds", 0) for s in actual_recent) / 60, 1)
+    today_minutes = round(sum(s.get("actual_seconds", 0) for s in today_actual) / 60, 1)
+    serializable_recent = []
+    for session in recent:
+        item = dict(session)
+        for field in ("started_at", "ended_at"):
+            value = item.get(field)
+            if isinstance(value, datetime):
+                item[field] = value.isoformat()
+        serializable_recent.append(item)
     handler.send_json({
-        "sessions": recent,
-        "total_minutes_today": sum(s.get("duration_minutes", 0) for s in sessions if s["started_at"] >= now.replace(hour=0, minute=0, second=0)),
+        "sessions": serializable_recent,
+        "total_minutes_today": today_minutes,
         "total_minutes_week": total_minutes,
-        "total_sessions_week": total_sessions,
+        "total_sessions_week": len(actual_recent),
+        "legacy_sessions_week": len(legacy_recent),
     })
 
 
@@ -780,10 +1273,13 @@ def handle_get_stats(handler: MomentumHandler, user_id: str) -> None:
         created_key = t.created_at.strftime("%m-%d")
         if created_key in daily_created:
             daily_created[created_key] += 1
-        if t.status == TaskStatus.DONE:
-            updated_key = t.updated_at.strftime("%m-%d")
-            if updated_key in daily_done:
-                daily_done[updated_key] += 1
+
+    completion_events = engine.get_completion_events(user_id, since=now - timedelta(days=13))
+    for event in completion_events:
+        completed_at = event["completed_at"].astimezone(timezone.utc)
+        completed_key = completed_at.strftime("%m-%d")
+        if completed_key in daily_done:
+            daily_done[completed_key] += 1
 
     # 优先级分布
     priority_counts = {"high": 0, "medium": 0, "low": 0}
@@ -793,23 +1289,26 @@ def handle_get_stats(handler: MomentumHandler, user_id: str) -> None:
 
     # 完成时段分布（24小时）
     hourly_done = {str(h): 0 for h in range(24)}
-    for t in tasks:
-        if t.status == TaskStatus.DONE:
-            hourly_done[str(t.updated_at.hour)] += 1
+    for event in completion_events:
+        completed_at = event["completed_at"].astimezone(timezone.utc)
+        hourly_done[str(completed_at.hour)] += 1
 
     # 每周模式
     weekly_pattern = engine.get_weekly_pattern(user_id)
 
     # 专注分钟数（最近14天）
-    focus_daily: dict[str, int] = {}
+    focus_daily_seconds: dict[str, int] = {}
     for i in range(13, -1, -1):
         d = now - timedelta(days=i)
-        focus_daily[d.strftime("%m-%d")] = 0
+        focus_daily_seconds[d.strftime("%m-%d")] = 0
     sessions = handler.store.get_focus_sessions(user_id=user_id)
     for s in sessions:
+        if s.get("actual_seconds") is None:
+            continue
         key = s["started_at"].strftime("%m-%d")
-        if key in focus_daily:
-            focus_daily[key] += s.get("duration_minutes", 0)
+        if key in focus_daily_seconds:
+            focus_daily_seconds[key] += int(s["actual_seconds"])
+    focus_daily = {key: round(seconds / 60, 1) for key, seconds in focus_daily_seconds.items()}
 
     handler.send_json({
         "profile": profile.to_dict(),

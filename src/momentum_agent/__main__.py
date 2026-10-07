@@ -114,10 +114,10 @@ def main() -> None:
     serve_parser.add_argument("--port", type=int, default=None, help="监听端口（默认走 momentum.config.json 或 8765）。")
 
     mcp_parser = subparsers.add_parser("mcp", help="Start the MCP server for external AI agents.")
-    mcp_parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio",
-                            help="Transport: stdio (local, default) or sse (HTTP).")
-    mcp_parser.add_argument("--host", default=None, help="SSE 模式监听地址（默认走 momentum.config.json 或 127.0.0.1）。")
-    mcp_parser.add_argument("--port", type=int, default=None, help="SSE 模式监听端口（默认走 momentum.config.json 或 8766）。")
+    mcp_parser.add_argument("--transport", choices=["stdio", "streamable-http", "sse"], default="stdio",
+                            help="Transport: stdio (local), streamable-http, or legacy sse. Non-loopback HTTP requires MOMENTUM_MCP_API_KEY.")
+    mcp_parser.add_argument("--host", default=None, help="HTTP 监听地址（默认配置值或 127.0.0.1）；非 loopback 必须设置 MOMENTUM_MCP_API_KEY。")
+    mcp_parser.add_argument("--port", type=int, default=None, help="HTTP 模式监听端口（默认走 momentum.config.json 或 8766）。")
     mcp_parser.add_argument("--user", default=None, help="目标用户（默认 MOMENTUM_USER 或 default）。")
 
     init_parser = subparsers.add_parser("init", help="配置向导：交互式完成全部配置。")
@@ -145,6 +145,27 @@ def main() -> None:
             db_url=args.db,
             non_interactive=args.non_interactive,
             skip_db_check=args.skip_db_check,
+        )
+        return
+
+    if args.command == "mcp":
+        from momentum_agent.mcp_server import run_mcp_server, validate_mcp_transport_security
+        from momentum_agent.wizard_config import get_mcp_host, get_mcp_port
+
+        mcp_host = get_mcp_host(args.host)
+        mcp_port = get_mcp_port(args.port)
+        try:
+            validate_mcp_transport_security(args.transport, mcp_host)
+        except ValueError as exc:
+            parser.error(str(exc))
+        mcp_user = args.user or get_current_user()
+        log.info("starting MCP server transport=%s user=%r", args.transport, mcp_user)
+        run_mcp_server(
+            database_url,
+            transport=args.transport,
+            user_id=mcp_user,
+            host=mcp_host,
+            port=mcp_port,
         )
         return
 
@@ -218,21 +239,6 @@ def main() -> None:
         web_port = get_web_port(args.port)
         log.info("starting server %s:%s", web_host, web_port)
         run_server(database_url, host=web_host, port=web_port)
-    elif args.command == "mcp":
-        from momentum_agent.mcp_server import run_mcp_server
-        from momentum_agent.wizard_config import get_mcp_host, get_mcp_port
-
-        mcp_user = args.user or user_id
-        mcp_host = get_mcp_host(args.host)
-        mcp_port = get_mcp_port(args.port)
-        log.info("starting MCP server transport=%s user=%r", args.transport, mcp_user)
-        run_mcp_server(
-            database_url,
-            transport=args.transport,
-            user_id=mcp_user,
-            host=mcp_host,
-            port=mcp_port,
-        )
 
 
 def print_tasks(store: TaskStore, status: TaskStatus, *, user_id: str = DEFAULT_USER_ID) -> None:

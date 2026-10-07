@@ -365,6 +365,24 @@ def _make_hooks():
     return _H()
 
 
+def _build_run_config(
+    provider: ProviderConfig,
+    *,
+    workflow_name: str,
+    input_guardrails: list | None = None,
+    output_guardrails: list | None = None,
+):
+    """Build per-run SDK config, including provider-specific tracing policy."""
+    from agents import RunConfig
+
+    return RunConfig(
+        input_guardrails=input_guardrails,
+        output_guardrails=output_guardrails,
+        tracing_disabled=provider.disable_tracing,
+        workflow_name=workflow_name,
+    )
+
+
 def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, user_id: str = DEFAULT_USER_ID):
     """Build the unified Momentum agent with handoffs to specialist sub-agents."""
     store_key = str(getattr(store, "db_path", getattr(store, "dsn", str(store))))
@@ -667,7 +685,7 @@ async def run_agent_message(
         return create_task_from_text(store, message, user_id=user_id)
 
     try:
-        from agents import Runner, RunConfig, set_default_openai_client
+        from agents import Runner, set_default_openai_client
     except ImportError:
         return create_task_from_text(store, message, user_id=user_id)
     openai_client = build_openai_client(provider)
@@ -693,7 +711,8 @@ async def run_agent_message(
             agent, agent_input,
             max_turns=30,
             hooks=_make_hooks(),
-            run_config=RunConfig(
+            run_config=_build_run_config(
+                provider,
                 output_guardrails=[out_guardrail],
                 workflow_name="momentum-vision",
             ),
@@ -704,7 +723,8 @@ async def run_agent_message(
             agent, agent_input,
             max_turns=30,
             hooks=_make_hooks(),
-            run_config=RunConfig(
+            run_config=_build_run_config(
+                provider,
                 input_guardrails=[guardrail],
                 output_guardrails=[out_guardrail],
                 workflow_name="momentum-chat",
@@ -721,7 +741,7 @@ async def run_agent_message(
 async def run_agent_message_stream(
     database_url: str, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
 ) -> AsyncIterator[dict]:
-    """True streaming with Runner.run_streamed + fallback to Runner.run with hooks.
+    """Stream an agent run and fail closed rather than rerunning it.
 
     Yields dict events:
     - {"type": "tool_start", "name": "search_tasks"}
@@ -750,7 +770,7 @@ async def run_agent_message_stream(
         return
 
     try:
-        from agents import Runner, RunConfig, set_default_openai_client
+        from agents import Runner, set_default_openai_client
     except ImportError:
         yield {"type": "chunk", "text": create_task_from_text(store, message, user_id=user_id)}
         yield {"type": "done"}
@@ -773,10 +793,19 @@ async def run_agent_message_stream(
                 ],
             }
         ]
-        run_config = RunConfig(output_guardrails=[out_guardrail], workflow_name="momentum-vision-stream")
+        run_config = _build_run_config(
+            provider,
+            output_guardrails=[out_guardrail],
+            workflow_name="momentum-vision-stream",
+        )
     else:
         agent_input = history + [{"role": "user", "content": message}]
-        run_config = RunConfig(input_guardrails=[guardrail], output_guardrails=[out_guardrail], workflow_name="momentum-chat-stream")
+        run_config = _build_run_config(
+            provider,
+            input_guardrails=[guardrail],
+            output_guardrails=[out_guardrail],
+            workflow_name="momentum-chat-stream",
+        )
 
     # ── 尝试真流式 ──
     try:
@@ -802,68 +831,15 @@ async def run_agent_message_stream(
             yield {"type": "done"}
             log.info("agent stream done (real streaming): user=%r", user_id)
             return
+        raise RuntimeError("Agent stream ended before the run completed")
     except Exception as exc:
-        log.warning("Streaming failed, falling back to Runner.run: %s", exc)
-
-    # ── 回退：Runner.run + hook 事件推送 ──
-    event_queue: asyncio.Queue = asyncio.Queue()
-
-    from agents.lifecycle import RunHooksBase
-
-    class _StreamingHooks(RunHooksBase):
-        async def on_tool_start(self, context, agent, tool):
-            await event_queue.put({"type": "tool_start", "name": tool.name})
-        async def on_tool_end(self, context, agent, tool, result):
-            await event_queue.put({"type": "tool_end", "name": tool.name})
-        async def on_agent_start(self, context, agent):
-            pass
-        async def on_agent_end(self, context, agent, output):
-            pass
-
-    hooks = _StreamingHooks()
-
-    async def _run_agent():
-        try:
-            result = await Runner.run(agent, agent_input, max_turns=30, hooks=hooks, run_config=run_config)
-            await event_queue.put({"type": "_done", "text": result.final_output, "history": result.to_input_list()})
-        except Exception as e:
-            await event_queue.put({"type": "_error", "message": str(e)})
-
-    task = asyncio.create_task(_run_agent())
-
-    # 从队列中读取事件并推送给前端
-    while True:
-        try:
-            event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-        except asyncio.TimeoutError:
-            if task.done():
-                break
-            continue
-
-        if event["type"] == "_done":
-            # 流式输出最终文本
-            reply = event["text"]
-            for char in reply:
-                yield {"type": "chunk", "text": char}
-                await asyncio.sleep(0.015)
-            _save_history(user_id, event.get("history", []))
-            yield {"type": "done"}
-            break
-        elif event["type"] == "_error":
-            yield {"type": "error", "message": event["message"]}
-            yield {"type": "done"}
-            break
-        else:
-            yield event
-
-    # 确保任务完成
-    if not task.done():
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    log.info("agent stream done (fallback): user=%r", user_id)
+        log.warning("Streaming failed; automatic rerun disabled to avoid repeating tools: %s", exc)
+        yield {
+            "type": "error",
+            "message": "流式请求中断，系统没有自动重跑，以避免重复执行工具。请先检查任务状态，再决定是否重新发送。",
+        }
+        yield {"type": "done"}
+        return
 
 
 # 缓存 AsyncOpenAI 客户端，避免每次对话都重建连接池
