@@ -34,7 +34,7 @@ test("background image bytes use IndexedDB and cloud payload is metadata-only", 
 });
 
 test("service worker refreshes and precaches the current preference and recovery modules", () => {
-  assert.match(serviceWorkerJs, /momentum-v7/);
+  assert.match(serviceWorkerJs, /momentum-v8/);
   for (const module of ["appearance.mjs", "background.mjs", "city.mjs", "focus-clock.mjs", "focus-recovery.mjs"]) {
     assert.ok(serviceWorkerJs.includes(`/js/${module}`), `missing cached module ${module}`);
   }

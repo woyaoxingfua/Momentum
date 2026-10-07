@@ -143,6 +143,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "dependents": _handlers.handle_get_dependents,
         "relations": _handlers.handle_get_task_relations,
         "is-blocked": _handlers.handle_is_task_blocked,
+        "frequent": _handlers.handle_frequent_tasks,
     }
 
     POST_PUBLIC_ROUTES = {
@@ -166,6 +167,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/config": _handlers.handle_set_config,
         "/api/import": _handlers.handle_import,
         "/api/focus/start": _handlers.handle_start_focus,
+        "/api/frequent/recreate": _handlers.handle_recreate_frequent_task,
         "/api/focus/finish": _handlers.handle_finish_focus,
     }
 

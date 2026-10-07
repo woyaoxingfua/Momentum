@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 from momentum_agent.web.server import MomentumHandler
 
 
@@ -25,6 +27,32 @@ def test_background_module_is_served_as_javascript(monkeypatch):
     assert MomentumHandler._send_static_or_none(FakeRouteHandler(), "/js/background.mjs")
     assert captured == {
         "filename": "js/background.mjs",
+        "content_type": "text/javascript; charset=utf-8",
+    }
+
+
+@pytest.mark.parametrize("module", ["background.mjs", "attachments.mjs", "frequent.mjs"])
+def test_local_storage_modules_are_shipped_and_served_as_javascript(monkeypatch, module):
+    from momentum_agent.web import handlers
+
+    static_root = Path(__file__).parents[1] / "src" / "momentum_agent" / "static"
+    assert (static_root / "js" / module).is_file(), module
+
+    captured = {}
+    monkeypatch.setattr(
+        handlers,
+        "send_static",
+        lambda _handler, filename, content_type: captured.update(
+            filename=filename, content_type=content_type
+        ),
+    )
+
+    class FakeRouteHandler:
+        STATIC_MAP = MomentumHandler.STATIC_MAP
+
+    assert MomentumHandler._send_static_or_none(FakeRouteHandler(), "/js/" + module)
+    assert captured == {
+        "filename": "js/" + module,
         "content_type": "text/javascript; charset=utf-8",
     }
 

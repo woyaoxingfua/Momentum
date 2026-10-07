@@ -3,6 +3,7 @@ import { loadReview, postponeTask } from "./advice.js";
 import { createTaskCompletionReviewEntry } from "./completion-review-entry.mjs";
 import { createTaskCompletionAction } from "./task-completion-action.mjs";
 import { cleanupAttachmentsForTask, openAttachmentDialog, refreshAttachmentBadges } from "./attachments.mjs";
+import { createFrequentCompletedEntry } from "./frequent.mjs";
 import { filterUnestimatedDailyWorkloadTasks, getDailyWorkloadEstimate, isValidLocalDateKey, localDateKey, positiveEstimateMinutes, taskDueLocalDate } from "./daily-workload.mjs";
 
 const els = {};
@@ -11,6 +12,7 @@ let currentStatus = "todo";
 let appEls = null;
 let currentTasks = [];
 let completionReviewEntry = null;
+let frequentEntry = null;
 let editingTask = null;
 let onTaskUpdated = null;
 const pendingTaskCompletions = new Set();
@@ -35,6 +37,10 @@ export function initTasks(elements, dialogElements, appElements, taskUpdatedHand
   unsubscribePostponeState?.();
   unsubscribeCompletionState?.();
   Object.assign(els, elements, dialogElements);
+  const frequent = getFrequentEntry();
+  if (frequent && els.tasks?.before && !frequent.element.isConnected) {
+    els.tasks.before(frequent.element);
+  }
   if (!els.dueDateFilterButton) {
     els.dueDateFilterButton = globalThis.document?.getElementById?.("dueDateFilterButton") || null;
   }
@@ -714,6 +720,16 @@ completeTask.getPendingIntents = () => taskCompletion.getPendingIntents();
 completeTask.getCurrentUserId = () => taskCompletion.getCurrentUserId();
 completeTask.subscribe = (listener) => taskCompletion.subscribe(listener);
 completeTask.getCompletionFeedback = (taskId) => getCompletionFeedback(taskId);
+
+function getFrequentEntry() {
+  if (!frequentEntry) {
+    frequentEntry = createFrequentCompletedEntry({
+      requestJson,
+      onCreated: async () => { await loadTasks(); },
+    });
+  }
+  return frequentEntry;
+}
 
 function getCompletionReviewEntry() {
   if (!completionReviewEntry) {

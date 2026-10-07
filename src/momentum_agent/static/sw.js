@@ -1,4 +1,4 @@
-const CACHE_NAME = "momentum-v7";
+const CACHE_NAME = "momentum-v8";
 
 const PRECACHE_ASSETS = [
   "/",
@@ -28,6 +28,8 @@ const PRECACHE_JS = [
   "/js/appearance.mjs",
   "/js/background.mjs",
   "/js/city.mjs",
+  "/js/attachments.mjs",
+  "/js/frequent.mjs",
 ];
 
 self.addEventListener("install", (event) => {

@@ -448,6 +448,42 @@ class MySQLTaskStore:
             rows = cur.fetchall()
         return [row_to_task(row) for row in rows]
 
+    def list_completed_task_history(
+        self, *, user_id: str = DEFAULT_USER, since: datetime
+    ) -> list[dict[str, Any]]:
+        """真实完成事件（payload=done），排除周期任务，供「历史常完成任务」聚合。"""
+        log.debug("list_completed_task_history user=%r since=%s", user_id, since)
+        with self._connect() as conn:
+            cur = self._execute(
+                conn,
+                """
+                SELECT t.id AS task_id, t.title AS title, t.priority AS priority,
+                       t.estimated_minutes AS estimated_minutes, t.tags AS tags,
+                       e.created_at AS completed_at
+                FROM task_events e
+                JOIN tasks t ON t.id = e.task_id
+                WHERE t.user_id = %s
+                  AND e.event_type = 'status_changed'
+                  AND e.payload = 'done'
+                  AND e.created_at >= %s
+                  AND (t.recurrence IS NULL OR t.recurrence = '')
+                ORDER BY e.created_at DESC, t.id DESC
+                """,
+                (user_id, encode_dt(since)),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "task_id": int(row["task_id"]),
+                "title": row["title"],
+                "priority": row["priority"],
+                "estimated_minutes": row["estimated_minutes"],
+                "tags": _deserialize_tags(row["tags"]),
+                "completed_at": decode_dt(row["completed_at"]),
+            }
+            for row in rows
+        ]
+
     def _get_task(self, task_id: int) -> Task | None:
         with self._connect() as conn:
             cur = self._execute(conn, "SELECT * FROM tasks WHERE id = %s", (task_id,))

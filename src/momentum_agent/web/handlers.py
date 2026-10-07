@@ -206,6 +206,49 @@ def handle_search_tasks(handler: MomentumHandler, query: str, user_id: str) -> N
     handler.send_json({"tasks": [task_to_json(t) for t in results]})
 
 
+# ── 历史常完成任务 ──────────────────────────────────────────────
+
+def handle_frequent_tasks(handler: MomentumHandler, path: str, user_id: str) -> None:
+    """GET /api/tasks/frequent — 近 180 天真实完成事件聚合出的「常完成任务」。"""
+    from ..frequent import DEFAULT_HISTORY_DAYS, MIN_DISTINCT_TASKS, aggregate_frequent_tasks, history_since
+    rows = handler.store.list_completed_task_history(user_id=user_id, since=history_since())
+    tasks = aggregate_frequent_tasks(rows)
+    handler.send_json({
+        "tasks": [item.to_dict() for item in tasks],
+        "window_days": DEFAULT_HISTORY_DAYS,
+        "min_distinct_tasks": MIN_DISTINCT_TASKS,
+    })
+
+
+def handle_recreate_frequent_task(handler: MomentumHandler, user_id: str) -> None:
+    """POST /api/frequent/recreate — 「再来一个」：只复制标题、优先级、估时、标签。"""
+    from ..frequent import find_frequent_task, history_since
+    from ..models import Priority
+    from .utils import task_to_json
+    payload = handler.read_json()
+    key = str(payload.get("key", "")).strip()
+    if not key:
+        handler.send_json({"error": "缺少要重现的任务标识。"}, HTTPStatus.BAD_REQUEST)
+        return
+    rows = handler.store.list_completed_task_history(user_id=user_id, since=history_since())
+    match = find_frequent_task(rows, key)
+    if match is None:
+        handler.send_json({"error": "没有找到对应的历史常完成任务。"}, HTTPStatus.NOT_FOUND)
+        return
+    priority = Priority(match.priority) if match.priority in Priority._value2member_map_ else Priority.MEDIUM
+    task = handler.store.create_task(
+        match.title,
+        priority=priority,
+        estimated_minutes=match.estimated_minutes,
+        tags=match.tags,
+        user_id=user_id,
+    )
+    handler.send_json({
+        "message": f"已创建任务 #{task.id}：{task.title}",
+        "task": task_to_json(task),
+    })
+
+
 # ── 认证 ──────────────────────────────────────────────────────────
 
 def handle_register(handler: MomentumHandler) -> None:

@@ -197,7 +197,7 @@ test("same-owner retry success settles its storage key across reload and ignores
     "the UI reports when the durable settlement marker could not be stored");
 
   const sw = await readFile(new URL("../../src/momentum_agent/static/sw.js", import.meta.url), "utf8");
-  assert.match(sw, /const CACHE_NAME = "momentum-v7";/,
+  assert.match(sw, /const CACHE_NAME = "momentum-v8";/,
     "reload must install the recovery code that fences legacy service-worker writes");
 });
 
