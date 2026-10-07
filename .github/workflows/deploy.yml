@@ -71,6 +71,9 @@ jobs:
       - name: Browser regression — local-only attachments and frequent history
         run: python tests/frontend/local_first_browser.py
 
+      - name: Browser regression — service worker upgrade path
+        run: python tests/frontend/service_worker_upgrade_browser.py
+
       - name: Upload browser artifacts
         if: always()
         uses: actions/upload-artifact@v4
