@@ -9,6 +9,36 @@ from .mysql import MySQLTaskStore
 from .sqlite import SQLiteTaskStore
 
 
+def sqlite_path_from_url(database_url: str) -> str:
+    """把 sqlite:// URL（或裸路径）解析成 SQLite 真正能用的文件路径。
+
+    单独抽出来是为了能在不碰文件系统的前提下测试这些平台差异：
+      - sqlite:///C:/dir/db   -> C:/dir/db      Windows 盘符
+      - sqlite:///\\tmp\\db    -> \\tmp\\db       Windows 当前盘根目录；直接交给 Path
+                              会变成 UNC 路径而失败
+      - sqlite:////tmp/db     -> //tmp/db       POSIX 四斜杠写法，保持原样
+      - sqlite:///:memory:    -> :memory:
+    """
+    parsed = urlparse(database_url)
+    scheme = parsed.scheme.lower()
+    # Windows 绝对路径如 C:\\Users\\... 会被 urlparse 解析成 scheme='c'
+    if len(scheme) == 1 and scheme.isalpha() and database_url[1:2] == ":":
+        scheme = ""
+    if scheme not in ("sqlite", ""):
+        raise ValueError(f"不是 SQLite URL: {database_url}")
+
+    path = parsed.path
+    if scheme == "sqlite" and path:
+        stripped = path.lstrip("/")
+        if stripped == ":memory:":
+            return ":memory:"
+        if re.match(r"^[A-Za-z]:[/\\]", stripped):
+            return stripped
+        if os.name == "nt" and stripped.startswith("\\"):
+            return stripped
+        return path
+    return database_url
+
 def create_task_store(database_url: str | None = None) -> SQLiteTaskStore | MySQLTaskStore:
     """根据数据库 URL 创建存储后端。
 
@@ -36,20 +66,7 @@ def create_task_store(database_url: str | None = None) -> SQLiteTaskStore | MySQ
 
     if scheme in ("sqlite", ""):
         # sqlite:///path 或裸路径都走 SQLite
-        path = parsed.path
-        if scheme == "sqlite" and path:
-            # urlparse('sqlite:///:memory:').path == '/:memory:'
-            stripped = path.lstrip("/")
-            if stripped == ":memory:":
-                db_path = ":memory:"
-            elif re.match(r"^[A-Za-z]:[/\\]", stripped):
-                # Windows 盘符路径：sqlite:///C:\dir\db 的 parsed.path 是 '/C:\dir\db'
-                db_path = stripped
-            else:
-                db_path = path
-        else:
-            db_path = database_url
-        return SQLiteTaskStore(db_path)
+        return SQLiteTaskStore(sqlite_path_from_url(database_url))
 
     if scheme == "mysql":
         return MySQLTaskStore(database_url)

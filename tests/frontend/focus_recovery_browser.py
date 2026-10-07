@@ -11,6 +11,7 @@ or passwords. It does not touch the historical database or ports.
 from __future__ import annotations
 
 import json
+import re
 import hashlib
 import os
 import secrets
@@ -198,11 +199,14 @@ def main() -> int:
         first_route_hit = False
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(
-                headless=True,
-                executable_path="/usr/bin/chromium",
-                args=["--no-sandbox"],
-            )
+            # 允许用环境变量指定浏览器；默认沿用 Linux 上的 /usr/bin/chromium。
+            executable = os.environ.get("MOMENTUM_E2E_CHROMIUM")
+            if not executable and Path("/usr/bin/chromium").exists():
+                executable = "/usr/bin/chromium"
+            launch_kwargs: dict = {"headless": True, "args": ["--no-sandbox"]}
+            if executable:
+                launch_kwargs["executable_path"] = executable
+            browser = playwright.chromium.launch(**launch_kwargs)
             context = browser.new_context(viewport={"width": 1365, "height": 1000}, service_workers="allow")
             page = context.new_page()
             static_hashes: dict[str, list[dict]] = {}
@@ -261,12 +265,19 @@ def main() -> int:
             page.locator("#addTaskButton").click()
             page.get_by_text(task_title, exact=True).first.wait_for(timeout=15_000)
             page.reload(wait_until="domcontentloaded")
-            page.wait_for_function(
-                "title => Array.from(document.querySelector('#focusTaskSelect')?.options || []).some(option => option.textContent === title)",
+            # 选项文案现在是「标题（状态 · #ID · 估时）」，不能再按全等匹配；
+            # 这里按标题前缀找到选项并取其 value（任务 ID）再选择。
+            option_value = page.wait_for_function(
+                """title => {
+                     const select = document.querySelector('#focusTaskSelect');
+                     const option = Array.from(select?.options || [])
+                       .find((item) => item.textContent.startsWith(title));
+                     return option ? option.value : null;
+                   }""",
                 arg=task_title,
                 timeout=10_000,
-            )
-            page.locator("#focusTaskSelect").select_option(label=task_title)
+            ).json_value()
+            page.locator("#focusTaskSelect").select_option(value=option_value)
 
             # Capture the actual coordinator's submit result in this Playwright-owned page realm.
             page.evaluate(
@@ -344,7 +355,15 @@ def main() -> int:
             except PlaywrightTimeoutError:
                 pass  # Preserve actual registration/controller values in the report if unavailable.
             sw_after_success = after_success["serviceWorker"]
-            assert "momentum-v6" in after_success["momentumCacheNames"], "fresh origin must have installed the v6 app cache"
+            # 不要写死缓存版本：直接从服务端 /sw.js 读出当前 CACHE_NAME 再断言，
+            # 否则每次升版本（v6 -> v8）都会让这个浏览器回归用例失效。
+            sw_source = context.request.get(f"{origin}/sw.js").text()
+            cache_match = re.search(r'CACHE_NAME\s*=\s*"([^"]+)"', sw_source)
+            expected_cache = cache_match.group(1) if cache_match else "momentum-"
+            assert expected_cache in after_success["momentumCacheNames"], (
+                f"fresh origin must have installed the app cache {expected_cache}; "
+                f"got {after_success['momentumCacheNames']}"
+            )
 
             # Two real hard reloads in the same origin/context must not restore or resubmit the old finish.
             route_count_before_reloads = len(finish_bodies)
