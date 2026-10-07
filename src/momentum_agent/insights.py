@@ -103,6 +103,10 @@ class InsightsEngine:
 
     def _connect(self) -> Any:
         if self._is_sqlite:
+            open_connection = getattr(self.store, "open_connection", None)
+            if callable(open_connection):
+                # 复用 store 的连接来源，内存库（sqlite:///:memory:）才不会每次拿到空库
+                return open_connection()
             import sqlite3
             conn = sqlite3.connect(self.store.db_path)
             conn.row_factory = sqlite3.Row

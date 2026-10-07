@@ -386,6 +386,8 @@ def _build_run_config(
 def _build_agent(store: TaskStore, provider: ProviderConfig, openai_client, *, user_id: str = DEFAULT_USER_ID):
     """Build the unified Momentum agent with handoffs to specialist sub-agents."""
     store_key = str(getattr(store, "db_path", getattr(store, "dsn", str(store))))
+    if store_key == ":memory:":
+        store_key = f":memory:#{id(store)}"
     cache_key = (
         store_key,
         user_id,

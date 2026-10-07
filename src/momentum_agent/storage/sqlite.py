@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -115,6 +117,9 @@ CREATE TABLE IF NOT EXISTS task_done_occurrences (
 
 DEFAULT_USER = "default"
 
+# 内存库名称编号：保证同一进程内每个内存库唯一（不要用 id()，会被复用）
+_memory_store_counter = itertools.count(1)
+
 
 class SQLiteTaskStore:
     # 已初始化 schema 的数据库路径缓存，避免每次实例化都执行 migration
@@ -122,11 +127,30 @@ class SQLiteTaskStore:
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._memory_uri: str | None = None
+        self._memory_anchor: sqlite3.Connection | None = None
+        if str(db_path) == ":memory:":
+            # 每个连接各自独立的内存库会让建表结果立刻消失（list_tasks 报 no such table）。
+            # 改用命名 shared-cache 内存库，并保留一个常驻「锚」连接维持数据存活。
+            # 用进程内单调递增的编号而不是 id(self)：CPython 会复用已回收对象的 id，
+            # 一旦复用一个仍然存活（例如连接泄漏）的旧内存库，就会串到别人的数据。
+            self._memory_uri = (
+                f"file:momentum-memory-{os.getpid()}-{next(_memory_store_counter)}?mode=memory&cache=shared"
+            )
+            self._memory_anchor = sqlite3.connect(self._memory_uri, uri=True, check_same_thread=False)
+        else:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
         log.info("store opened: %s", self.db_path)
 
     def _init_schema(self) -> None:
+        if self._memory_uri:
+            # 内存库随实例存在，不能复用类级缓存，否则第二个实例会跳过建表
+            with self._connect() as conn:
+                conn.executescript(SCHEMA)
+                self._migrate(conn)
+                self._ensure_default_user(conn)
+            return
         key = str(self.db_path.resolve())
         if key in SQLiteTaskStore._schema_initialized:
             log.debug("schema already initialized for %s", self.db_path)
@@ -143,10 +167,28 @@ class SQLiteTaskStore:
         """应用启动时显式调用，确保 schema 已初始化。"""
         return cls(db_path)
 
+    def open_connection(self) -> sqlite3.Connection:
+        """新建一个指向本 store 数据库的连接；内存库返回共享库连接。"""
+        if self._memory_uri:
+            conn = sqlite3.connect(self._memory_uri, uri=True)
+        else:
+            conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def close(self) -> None:
+        """释放内存库的常驻连接；文件库无需调用。"""
+        anchor = self._memory_anchor
+        self._memory_anchor = None
+        if anchor is not None:
+            try:
+                anchor.close()
+            except sqlite3.Error:
+                pass
+
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn = self.open_connection()
         try:
             yield conn
             conn.commit()
