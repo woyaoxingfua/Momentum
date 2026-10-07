@@ -394,7 +394,9 @@ export function bindAttachmentDialog(options = {}) {
   els.close?.addEventListener("click", close);
   els.dialog?.addEventListener("close", () => { releaseUrls(); currentTask = null; });
   els.file?.addEventListener("change", () => {
-    const files = els.file.files;
+    // 必须先快照成真正的数组：input.value = "" 会把 input.files 清空，
+    // 之前拿到的 FileList 引用在某些浏览器里会随之变空，导致附件被静默丢弃。
+    const files = Array.from(els.file.files || []);
     els.file.value = "";
     void addFiles(files);
   });

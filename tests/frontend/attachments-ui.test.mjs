@@ -11,7 +11,7 @@ class FakeElement {
     this.textContent = "";
     this.className = "";
     this.dataset = {};
-    this.value = "";
+    this._value = "";
     this.files = null;
     this.open = false;
     this.alt = "";
@@ -19,6 +19,13 @@ class FakeElement {
     this.type = "";
     this.innerHTMLWrites = 0;
     this.classList = { toggle: () => {} };
+  }
+  get value() { return this._value; }
+  set value(next) {
+    this._value = next;
+    // 真实浏览器里把 value 设为 "" 会清空 FileList —— 假实现必须一致，
+    // 否则「先清空再读文件」这种顺序错误在单元测试里永远发现不了。
+    if (next === "") this.files = null;
   }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = [...nodes]; }

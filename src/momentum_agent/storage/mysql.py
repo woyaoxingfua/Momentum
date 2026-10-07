@@ -16,6 +16,7 @@ from .sqlite import (
     row_to_task,
     row_to_task_relation,
     utcnow,
+    _coerce_priority,
     _deserialize_tags,
     _next_recurrence_due,
     _serialize_tags,
@@ -346,7 +347,9 @@ class MySQLTaskStore:
                 return None
             return row["user_id"]
 
-    def logout_user(self, token: str) -> None:
+    def logout_user(self, token: str | None) -> None:
+        if not token:
+            return
         log.info("logout token=...%s", token[-8:])
         with self._connect() as conn:
             self._execute(conn, "DELETE FROM sessions WHERE token = %s", (token,))
@@ -388,6 +391,7 @@ class MySQLTaskStore:
         tags: list[str] | None = None,
         user_id: str = DEFAULT_USER,
     ) -> Task:
+        priority = _coerce_priority(priority)
         now = utcnow()
         log.info("create_task title=%r user=%r priority=%s", title.strip(), user_id, priority.value)
         tags_str = _serialize_tags(tags)
@@ -686,6 +690,8 @@ class MySQLTaskStore:
         user_id: str = DEFAULT_USER,
     ) -> Task | None:
         log.info("update_task id=%d user=%r", task_id, user_id)
+        if priority is not None:
+            priority = _coerce_priority(priority)
         now = utcnow()
         sets: list[str] = []
         params: list[object] = []

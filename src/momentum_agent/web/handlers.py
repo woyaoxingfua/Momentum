@@ -13,9 +13,45 @@ from urllib.parse import parse_qs, urlsplit
 if TYPE_CHECKING:
     from .server import MomentumHandler
 
-_login_attempts: dict[str, tuple[int, float]] = {}
+_login_attempts: dict[str, tuple[int, float, float]] = {}
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_LOCKOUT_SECONDS = 300
+MAX_TRACKED_LOGIN_CLIENTS = 4096
+
+
+def _prune_login_attempts(now: float) -> None:
+    """清理登录失败记录。
+
+    以前这个字典只增不减：任何一次失败登录都会留下一个 IP 条目，
+    长期运行就是一个无界增长的内存泄漏（也是可被放大的攻击面）。
+    这里先清掉「锁定已过期且长时间没有活动」的条目；仍然超过上限时按最久未活动裁剪。
+    """
+    for client_ip, (_attempts, lockout_until, seen) in list(_login_attempts.items()):
+        if lockout_until <= now and now - seen > LOGIN_LOCKOUT_SECONDS:
+            _login_attempts.pop(client_ip, None)
+    overflow = len(_login_attempts) - MAX_TRACKED_LOGIN_CLIENTS
+    if overflow > 0:
+        oldest = sorted(_login_attempts.items(), key=lambda item: item[1][2])[:overflow]
+        for client_ip, _value in oldest:
+            _login_attempts.pop(client_ip, None)
+
+
+def _login_attempt_state(client_ip: str, now: float) -> tuple[int, float]:
+    raw = _login_attempts.get(client_ip)
+    if raw is None:
+        return 0, 0.0
+    if len(raw) == 3:
+        attempts, lockout_until, _seen = raw
+        return attempts, lockout_until
+    attempts, lockout_until = raw  # 兼容旧的两元组记录
+    return attempts, lockout_until
+
+
+def _record_login_failure(client_ip: str, attempts: int, now: float) -> None:
+    next_attempts = attempts + 1
+    lockout_until = now + LOGIN_LOCKOUT_SECONDS if next_attempts >= MAX_LOGIN_ATTEMPTS else 0.0
+    _login_attempts[client_ip] = (next_attempts, lockout_until, now)
+    _prune_login_attempts(now)
 
 
 # ── 静态文件 ──────────────────────────────────────────────────────
@@ -276,7 +312,7 @@ def handle_register(handler: MomentumHandler) -> None:
 def handle_login(handler: MomentumHandler) -> None:
     client_ip = handler.client_address[0] if handler.client_address else "unknown"
     now = time.time()
-    attempts, lockout_until = _login_attempts.get(client_ip, (0, 0.0))
+    attempts, lockout_until = _login_attempt_state(client_ip, now)
     if now < lockout_until:
         remaining = int(lockout_until - now)
         handler.send_json(
@@ -293,15 +329,14 @@ def handle_login(handler: MomentumHandler) -> None:
         return
     token = handler.store.login_user(user_id, password)
     if not token:
-        new_attempts = attempts + 1
-        if new_attempts >= MAX_LOGIN_ATTEMPTS:
-            _login_attempts[client_ip] = (new_attempts, now + LOGIN_LOCKOUT_SECONDS)
+        _record_login_failure(client_ip, attempts, now)
+        _, lockout_until = _login_attempt_state(client_ip, now)
+        if lockout_until > now:
             handler.send_json(
                 {"error": f"登录失败次数过多，请 {LOGIN_LOCKOUT_SECONDS} 秒后再试"},
                 HTTPStatus.TOO_MANY_REQUESTS,
             )
         else:
-            _login_attempts[client_ip] = (new_attempts, 0.0)
             handler.send_json({"error": "用户名或密码错误"}, HTTPStatus.UNAUTHORIZED)
         return
     _login_attempts.pop(client_ip, None)

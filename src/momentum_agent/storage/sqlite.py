@@ -289,7 +289,9 @@ class SQLiteTaskStore:
                 return None
             return row["user_id"]
 
-    def logout_user(self, token: str) -> None:
+    def logout_user(self, token: str | None) -> None:
+        if not token:
+            return
         log.info("logout token=...%s", token[-8:])
         with self._connect() as conn:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
@@ -329,6 +331,7 @@ class SQLiteTaskStore:
         tags: list[str] | None = None,
         user_id: str = DEFAULT_USER,
     ) -> Task:
+        priority = _coerce_priority(priority)
         now = utcnow()
         log.info("create_task title=%r user=%r priority=%s", title.strip(), user_id, priority.value)
         tags_str = _serialize_tags(tags)
@@ -563,6 +566,8 @@ class SQLiteTaskStore:
         user_id: str = DEFAULT_USER,
     ) -> Task | None:
         log.info("update_task id=%d user=%r", task_id, user_id)
+        if priority is not None:
+            priority = _coerce_priority(priority)
         now = utcnow()
         sets: list[str] = []
         params: list[object] = []
@@ -1696,6 +1701,22 @@ def _next_recurrence_due(from_date: datetime | None, recurrence: str) -> datetim
         except ValueError:
             return from_date + timedelta(days=30)
     return None
+
+
+def _coerce_priority(value: "Priority | str | None", *, default: Priority = Priority.MEDIUM) -> Priority:
+    """把字符串优先级转成枚举。
+
+    以前直接写 priority.value，传字符串会在日志行里抛 AttributeError，
+    错误信息完全看不出是调用方传错了类型。
+    """
+    if value is None:
+        return default
+    if isinstance(value, Priority):
+        return value
+    try:
+        return Priority(str(value).strip().lower())
+    except ValueError:
+        raise ValueError(f"无效优先级：{value!r}（可选 low/medium/high）") from None
 
 
 def _serialize_tags(tags: list[str] | None) -> str | None:
