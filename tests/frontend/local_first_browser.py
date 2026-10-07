@@ -173,6 +173,9 @@ def main() -> int:
 
         with sync_playwright() as playwright:
             launch_kwargs = {"headless": True}
+            if os.name != "nt":
+                # CI 容器里通常需要关闭沙箱；Windows 本地跑不需要。
+                launch_kwargs["args"] = ["--no-sandbox"]
             if os.environ.get("MOMENTUM_E2E_CHROMIUM"):
                 launch_kwargs["executable_path"] = os.environ["MOMENTUM_E2E_CHROMIUM"]
             browser = playwright.chromium.launch(**launch_kwargs)
