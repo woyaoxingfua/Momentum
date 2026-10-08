@@ -617,11 +617,25 @@ class TestMySQLTaskStore:
 
     def test_export_import(self, mysql_store):
         mysql_store.create_task("导出任务", tags=["work"])
-        mysql_store.set_memory("key", "value")
+        mysql_store.set_memory("pref1", "value1")
+        # 「key」这个词本身会被凭据过滤命中（_is_credential_key 把单独的 key 视为凭据），
+        # 因此这里显式分开：普通偏好照常导出，凭据类键按设计不进备份。
+        mysql_store.set_memory("api_key", "should-not-be-exported")
 
         data = mysql_store.export_user_data()
         assert len(data["tasks"]) == 1
-        assert data["memory"]["key"] == "value"
+        assert data["memory"]["pref1"] == "value1"
+        assert "api_key" not in data["memory"], "凭据类 memory 不得进入备份"
+        assert data["excluded_memory"]["count"] >= 1
+
+        # 导入在 MySQL 上同样可用（v1 合并语义）
+        imported = mysql_store.import_user_data({
+            "tasks": [{"title": "导入任务", "priority": "high"}],
+            "memory": {"pref2": "value2"},
+        })
+        assert imported == 1
+        assert "导入任务" in [task.title for task in mysql_store.list_tasks(status=None)]
+        assert mysql_store.get_memory("pref2") == "value2"
 
     def test_heartbeat_config(self, mysql_store):
         config = mysql_store.get_heartbeat_config()
