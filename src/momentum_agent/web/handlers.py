@@ -730,7 +730,10 @@ def handle_get_heartbeat_suggestion(handler: MomentumHandler, user_id: str) -> N
     ctx = build_user_context(tasks)
     suggestion = heartbeat_suggestion(tasks, ctx)
     should_trigger = store.should_trigger_heartbeat(user_id=user_id)
-    store.update_last_heartbeat(user_id=user_id)
+    if should_trigger:
+        # 只有真正投递出建议才推进计时器。前端每 60 秒就会问一次，
+        # 若无条件更新 last_heartbeat_at，间隔永远攒不满，心跳只会出现一次。
+        store.update_last_heartbeat(user_id=user_id)
     handler.send_json({
         "suggestion": suggestion,
         "should_trigger": should_trigger,
