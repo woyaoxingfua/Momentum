@@ -125,6 +125,12 @@ def main() -> int:
             sw_file.write_text(sw_file.read_text(encoding="utf-8").replace(first_cache, next_cache), encoding="utf-8")
             api_js = static / "js" / "api.js"
             api_js.write_text(MARKER + "\n" + api_js.read_text(encoding="utf-8"), encoding="utf-8")
+            # 让 Last-Modified 明确晚于原文件：CI 上仓库刚 checkout，
+            # 若改写与原始 mtime 落在同一秒，服务端可能回 304，浏览器就会以为脚本没变，
+            # 从而永远发现不了新版本（本地因为检出较久所以看不出来）。
+            future = time.time() + 2
+            for target in (sw_file, api_js):
+                os.utime(target, (future, future))
 
             # 先确认服务端提供的就是副本里的新资源，否则后面的断言会误导排查方向。
             probe_body = urlopen(f"{origin}/js/api.js?cachebust={secrets.token_hex(4)}", timeout=10).read().decode("utf-8", "replace")
@@ -135,10 +141,25 @@ def main() -> int:
             seen_cache: list[str] = []
             marker_seen = False
             reloads_used = 0
-            for _ in range(8):
+            # 显式触发一次更新检查（不等待 install 结束，否则会让紧随其后的 reload 卡住）；
+            # 仅靠刷新触发会被浏览器节流：同一 SW 在短时间内只会真正检查一次。
+            page.evaluate(
+                """() => { navigator.serviceWorker.getRegistration().then((registration) => {"""
+                """  if (registration) registration.update();"""
+                """}); }"""
+            )
+            for _ in range(10):
                 reloads_used += 1
                 page.reload(wait_until="domcontentloaded")
-                page.wait_for_timeout(2000)
+                deadline = time.monotonic() + 6
+                while time.monotonic() < deadline:
+                    page.wait_for_timeout(500)
+                    seen_cache = page.evaluate("""async () => {
+                        const names = await caches.keys();
+                        return names.filter((n) => n.startsWith("momentum-")).sort();
+                    }""")
+                    if next_cache in seen_cache:
+                        break
                 page.evaluate("() => navigator.serviceWorker.ready.then(() => true)")
                 seen_cache = page.evaluate("""async () => {
                     const names = await caches.keys();
