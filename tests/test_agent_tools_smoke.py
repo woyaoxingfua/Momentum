@@ -147,3 +147,57 @@ def test_at_least_one_write_tool_actually_writes(agent_bundle):
     store = create_task_store("sqlite:///" + str(pathlib.Path(tempfile.mkdtemp()) / "probe.sqlite3"))
     assert store is not None
 
+
+
+def test_every_mcp_tool_body_runs(monkeypatch):
+    """MCP 是对外暴露的另一个面：外部 agent 也会逐个调用这些工具。"""
+    from momentum_agent.mcp_server import build_all_tools
+
+    url = "sqlite:///" + str(pathlib.Path(tempfile.mkdtemp()) / "mcp-smoke.sqlite3")
+    store = create_task_store(url)
+    parent = store.create_task("MCP 冒烟任务", tags=["mcp"], estimated_minutes=30)
+    store.create_task("MCP 子任务", parent_task_id=parent.id)
+
+    tools = build_all_tools(store, "default")
+    assert len(tools) >= 40, f"MCP 工具数量异常：{len(tools)}"
+    failures = []
+    for tool in tools:
+        arguments = build_arguments(tool, parent.id)
+        context = ToolContext(
+            context=None,
+            tool_name=getattr(tool, "name", "tool"),
+            tool_call_id="call-mcp",
+            tool_arguments=json.dumps(arguments),
+        )
+        try:
+            result = asyncio.run(tool.on_invoke_tool._invoke_tool_impl(context, json.dumps(arguments)))
+        except PROGRAMMING_ERRORS as exc:
+            failures.append(f"{tool.name}: {type(exc).__name__}: {exc}")
+        except Exception:
+            continue
+        else:
+            assert isinstance(result, str)
+    assert not failures, "MCP 工具函数体存在问题：\n" + "\n".join(failures)
+
+
+def test_the_smoke_guard_can_actually_fail(monkeypatch):
+    """自证：把工具函数体弄坏时，上面的检查必须能发现（避免假绿）。"""
+    from momentum_agent.agents.tools import create_extra_tools
+
+    url = "sqlite:///" + str(pathlib.Path(tempfile.mkdtemp()) / "mutation.sqlite3")
+    store = create_task_store(url)
+    tools = create_extra_tools(store, "default")
+    tool = next(item for item in tools if item.name == "get_all_tags")
+
+    original = tool.on_invoke_tool._invoke_tool_impl
+
+    async def broken(context, arguments):
+        raise AttributeError("storage backend lost this method")
+
+    monkeypatch.setattr(tool.on_invoke_tool, "_invoke_tool_impl", broken)
+    context = ToolContext(
+        context=None, tool_name="get_all_tags", tool_call_id="call-mutation", tool_arguments="{}",
+    )
+    with pytest.raises(PROGRAMMING_ERRORS):
+        asyncio.run(tool.on_invoke_tool._invoke_tool_impl(context, "{}"))
+    monkeypatch.setattr(tool.on_invoke_tool, "_invoke_tool_impl", original)
