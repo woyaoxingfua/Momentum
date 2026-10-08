@@ -4,28 +4,30 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from backend_fixtures import fetch_scalar
 from momentum_agent.models import TaskStatus
 from momentum_agent.storage import TaskStore
 from momentum_agent.storage.errors import TaskCannotBePostponed
 
 
-@pytest.fixture
-def store(tmp_path):
-    return TaskStore(tmp_path / "task-update-postpone.sqlite3")
+@pytest.fixture(params=["sqlite", "mysql"])
+def store(request, tmp_path):
+    """同一批更新/顺延断言同时跑 SQLite 与 MySQL。"""
+    if request.param == "sqlite":
+        return TaskStore(tmp_path / "task-update-postpone.sqlite3")
+    from backend_fixtures import fresh_mysql_store
+
+    return fresh_mysql_store()
 
 
 def _event_count(store, task_id: int, event_type: str | None = None) -> int:
-    with store._connect() as conn:
-        if event_type is None:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM task_events WHERE task_id = ?", (task_id,)
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND event_type = ?",
-                (task_id, event_type),
-            ).fetchone()
-    return row["n"]
+    if event_type is None:
+        return int(fetch_scalar(store, "SELECT COUNT(*) FROM task_events WHERE task_id = {ph}", (task_id,)) or 0)
+    return int(fetch_scalar(
+        store,
+        "SELECT COUNT(*) FROM task_events WHERE task_id = {ph} AND event_type = {ph}",
+        (task_id, event_type),
+    ) or 0)
 
 
 def test_update_task_is_owner_scoped_and_does_not_write_foreign_events(store, monkeypatch):

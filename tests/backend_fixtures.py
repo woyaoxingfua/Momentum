@@ -63,3 +63,21 @@ def fetch_scalar(store, sql: str, params: tuple = ()):
     if row is None:
         return None
     return next(iter(row.values())) if isinstance(row, dict) else row[0]
+
+
+def fetch_row(store, sql: str, params: tuple = ()):
+    """取一行（dict 形式，两个后端通用）；SQL 里用 {ph} 表示占位符。"""
+    statement = sql.format(ph=placeholder_for(store))
+    with store._connect() as connection:
+        cursor = connection.cursor()
+        cursor.execute(statement, params)
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def requires_sqlite(store) -> None:
+    """某些用例构造 SQLite 老库 / 触发器，只在 SQLite 后端有意义。"""
+    if type(store).__name__.startswith("MySQL"):
+        pytest.skip("该用例依赖 SQLite 专有的建库或触发器行为")

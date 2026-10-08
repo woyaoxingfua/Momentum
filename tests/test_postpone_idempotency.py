@@ -12,6 +12,7 @@ import pytest
 
 from momentum_agent.storage import SQLiteTaskStore
 from momentum_agent.web.handlers import handle_postpone_task
+from backend_fixtures import fetch_row, fetch_scalar, requires_sqlite
 
 
 KEY = "00000000-0000-4000-8000-000000000001"
@@ -60,34 +61,33 @@ def _call(store, task_id, *, user_id="alice", key=KEY, days=1, payload=_UNSET):
 
 
 def _event_count(store, task_id, event_type=None):
-    with store._connect() as conn:
-        if event_type is None:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM task_events WHERE task_id = ?", (task_id,)
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND event_type = ?",
-                (task_id, event_type),
-            ).fetchone()
-    return row["n"]
+    if event_type is None:
+        return int(fetch_scalar(store, "SELECT COUNT(*) FROM task_events WHERE task_id = {ph}", (task_id,)) or 0)
+    return int(fetch_scalar(
+        store,
+        "SELECT COUNT(*) FROM task_events WHERE task_id = {ph} AND event_type = {ph}",
+        (task_id, event_type),
+    ) or 0)
 
 
 def _idempotency_count(store, user_id=None):
-    with store._connect() as conn:
-        if user_id is None:
-            row = conn.execute("SELECT COUNT(*) AS n FROM task_postpone_idempotency").fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM task_postpone_idempotency WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()
-    return row["n"]
+    if user_id is None:
+        return int(fetch_scalar(store, "SELECT COUNT(*) FROM task_postpone_idempotency") or 0)
+    return int(fetch_scalar(
+        store,
+        "SELECT COUNT(*) FROM task_postpone_idempotency WHERE user_id = {ph}",
+        (user_id,),
+    ) or 0)
 
 
-@pytest.fixture
-def store(tmp_path):
-    return SQLiteTaskStore(tmp_path / "postpone-idempotency.sqlite3")
+@pytest.fixture(params=["sqlite", "mysql"])
+def store(request, tmp_path):
+    """同一批顺延幂等断言同时跑 SQLite 与 MySQL（这条链路的 SQL 两个后端不同）。"""
+    if request.param == "sqlite":
+        return SQLiteTaskStore(tmp_path / "postpone-idempotency.sqlite3")
+    from backend_fixtures import fresh_mysql_store
+
+    return fresh_mysql_store()
 
 
 @pytest.mark.parametrize(
@@ -157,6 +157,7 @@ def test_sqlite_store_direct_call_rejects_float_days_without_writes(store):
 
 
 def test_old_sqlite_database_gets_idempotency_table_without_changing_existing_data(tmp_path):
+    requires_sqlite(store)
     path = tmp_path / "legacy.sqlite3"
     conn = sqlite3.connect(path)
     conn.executescript(
@@ -322,11 +323,11 @@ def test_same_key_with_different_task_or_days_conflicts_without_writes(store):
     assert store.get_task_for_user(first_task.id, "alice") == first_after_success
     assert _event_count(store, first_task.id) == first_events
     assert _idempotency_count(store, "alice") == 1
-    with store._connect() as conn:
-        saved = conn.execute(
-            "SELECT request_fingerprint FROM task_postpone_idempotency WHERE user_id = ? AND idempotency_key = ?",
-            ("alice", KEY),
-        ).fetchone()
+    saved = fetch_row(
+        store,
+        "SELECT request_fingerprint FROM task_postpone_idempotency WHERE user_id = {ph} AND idempotency_key = {ph}",
+        ("alice", KEY),
+    )
     assert saved["request_fingerprint"] == _fingerprint(first_task.id, 1)
     assert len(saved["request_fingerprint"]) == 64
 
@@ -415,11 +416,11 @@ def test_300_digit_days_cache_and_replay_deterministic_errors(
     assert (None if case == "missing" else store.get_task_for_user(task_id, "alice")) == before_task
     assert (0 if case == "missing" else _event_count(store, task_id)) == before_events
     assert _idempotency_count(store, "alice") == 1
-    with store._connect() as conn:
-        saved = conn.execute(
-            "SELECT request_fingerprint, response_status, response_json FROM task_postpone_idempotency WHERE user_id = ? AND idempotency_key = ?",
-            ("alice", KEY),
-        ).fetchone()
+    saved = fetch_row(
+        store,
+        "SELECT request_fingerprint, response_status, response_json FROM task_postpone_idempotency WHERE user_id = {ph} AND idempotency_key = {ph}",
+        ("alice", KEY),
+    )
     assert saved["request_fingerprint"] == _fingerprint(task_id, huge_days)
     assert len(saved["request_fingerprint"]) == 64
     assert int(saved["response_status"]) == expected_status
@@ -441,6 +442,7 @@ def test_same_uuid_is_isolated_between_authenticated_users(store):
 
 
 def test_mid_transaction_failure_rolls_back_and_same_key_can_retry(store):
+    requires_sqlite(store)
     due = datetime(2026, 6, 7, 9, 15, tzinfo=timezone.utc)
     task = store.create_task("retry after failure", due_at=due, user_id="alice")
     before = store.get_task_for_user(task.id, "alice")
