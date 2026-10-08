@@ -7,6 +7,7 @@ from .tools import (
     create_heartbeat_tools,
     create_insight_tools,
     create_focus_tools,
+    create_extra_tools,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     'create_heartbeat_tools',
     'create_insight_tools',
     'create_focus_tools',
+    'create_extra_tools',
 ]
