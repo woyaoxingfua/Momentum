@@ -75,6 +75,10 @@ jobs:
       # 这条用例真实注册登录后走完该流程，并验证暂停时间不计入实际专注秒数。
       - name: Browser regression — focus timer UI (pause / resume)
         run: python tests/frontend/focus_timer_ui_browser.py
+      # 归档里那个「一次 UI 操作发出两个相同 POST、截止日 +2 天」的观察一直没有解释；
+      # 这条用例在真实浏览器里数请求，确认当前实现下一次点击只发一个 POST、只 +1 天。
+      - name: Browser regression — postpone sends exactly one POST
+        run: python tests/frontend/postpone_single_post_browser.py
       # 该用例已在真实 Linux 上验证通过（WSL Ubuntu / Python 3.12，headless shell 与完整
       # Chromium 各跑一次，均 6/6），并排除了副本加载、pip editable 解析等差异；
       # 之前两次 CI 失败无法读取日志，因此这里保留一次重试以吸收 runner 抖动。
