@@ -193,3 +193,20 @@ def test_cli_rejects_a_pending_operation(monkeypatch, capsys, cli_env):
     assert "已取消" in rejected, rejected
     assert cli_env["store"]._get_task(task.id).status.value == "todo"
     assert run_cli(monkeypatch, capsys, cli_env["url"], "approvals").find("cli002") == -1
+
+
+def test_cli_history_shows_persisted_turns(monkeypatch, capsys, cli_env):
+    """对话历史落库后，CLI 应能直接看到。"""
+    from momentum_agent import agent_app
+
+    agent_app._conversation_history.clear()
+    agent_app._save_history("default", [
+        {"role": "user", "content": "CLI 历史提问"},
+        {"role": "assistant", "content": "CLI 历史回答"},
+    ], cli_env["store"])
+    agent_app._conversation_history.clear()
+
+    output = run_cli(monkeypatch, capsys, cli_env["url"], "history")
+    assert "CLI 历史提问" in output, output
+    assert "CLI 历史回答" in output, output
+    agent_app._conversation_history.clear()

@@ -1329,6 +1329,12 @@ def handle_get_upcoming_notifications(handler: MomentumHandler, user_id: str) ->
     result.sort(key=lambda x: x["minutes_left"])
     handler.send_json({"notifications": result})
 
+def handle_chat_history(handler: MomentumHandler, user_id: str) -> None:
+    from ..agent_app import plain_chat_history
+
+    handler.send_json({"turns": plain_chat_history(user_id, store=handler.store)})
+
+
 # ── 待确认操作（破坏性操作审批） ─────────────────────────────────
 
 def handle_list_approvals(handler: MomentumHandler, user_id: str) -> None:

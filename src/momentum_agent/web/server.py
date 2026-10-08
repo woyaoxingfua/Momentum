@@ -135,6 +135,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/notifications/upcoming": _handlers.handle_get_upcoming_notifications,
         "/api/focus/stats": _handlers.handle_get_focus_stats,
         "/api/approvals": _handlers.handle_list_approvals,
+        "/api/chat/history": _handlers.handle_chat_history,
     }
 
     GET_PREFIX_ROUTES = {

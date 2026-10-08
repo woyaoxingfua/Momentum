@@ -74,6 +74,7 @@ def main() -> None:
 
     subparsers.add_parser("reopen", help="Reopen a done/dropped task.").add_argument("task_id", type=int)
 
+    subparsers.add_parser("history", help="Show the persisted chat history for this user.")
     subparsers.add_parser("approvals", help="List pending destructive operations awaiting approval.")
     approve_parser = subparsers.add_parser("approve", help="Approve and execute a pending operation.")
     approve_parser.add_argument("approval_id")
@@ -198,6 +199,16 @@ def main() -> None:
         print(start_task_cmd(store, args.task_id, user_id=user_id))
     elif args.command == "reopen":
         print(reopen_task_cmd(store, args.task_id, user_id=user_id))
+    elif args.command == "history":
+        from .agent_app import plain_chat_history
+
+        turns = plain_chat_history(user_id, store=store)
+        if not turns:
+            print("还没有对话历史。")
+        else:
+            for turn in turns:
+                speaker = "你" if turn["role"] == "user" else "助手"
+                print(f"{speaker}：{turn['content']}")
     elif args.command == "approvals":
         from .approvals import gated_tools, list_pending
 

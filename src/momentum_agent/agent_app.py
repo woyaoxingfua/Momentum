@@ -29,6 +29,30 @@ _agent_cache: dict[tuple, object] = {}
 
 CHAT_HISTORY_MEMORY_KEY = "chat_history"
 
+def plain_chat_history(user_id: str = DEFAULT_USER_ID, *, store=None, limit: int = MAX_HISTORY_ITEMS) -> list[dict]:
+    """把持久化的对话历史收敛成可直接展示的纯文本轮次。
+
+    存储里的 items 是 Agents SDK 的输入列表（含工具调用等结构），不适合直接给界面；
+    这里只保留 user/assistant 的文本内容，保证接口形状稳定且不泄漏工具细节。
+    """
+    turns: list[dict] = []
+    for item in _get_history(user_id, store):
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = item.get("content")
+        if isinstance(content, list):
+            content = " ".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
+            ).strip()
+        if not isinstance(content, str) or not content.strip():
+            continue
+        turns.append({"role": role, "content": content})
+    return turns[-limit:]
+
+
 
 def _load_history_from_store(store, user_id: str) -> list:
     """从存储里读回对话历史（重启/多 worker 场景）。"""
@@ -106,6 +130,7 @@ __all__ = [
     "run_agent_message_stream",
     "provider_status",
     "clear_conversation_history",
+    "plain_chat_history",
 ]
 
 

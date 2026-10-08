@@ -139,3 +139,53 @@ def test_http_chat_clear_also_clears_persisted_history(tmp_path, monkeypatch):
         thread.join(timeout=5)
         _store_cache.pop(database_url, None)
 
+
+
+def test_plain_chat_history_keeps_only_text_turns(store):
+    items = [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": [{"type": "text", "text": "在的"}]},
+        {"type": "function_call", "name": "create_task", "arguments": "{}"},
+        {"role": "tool", "content": "已创建"},
+        {"role": "assistant", "content": "   "},
+    ]
+    agent_app._save_history("alice", items, store)
+    agent_app._conversation_history.clear()
+
+    turns = agent_app.plain_chat_history("alice", store=store)
+    assert turns == [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "在的"}], turns
+
+
+def test_http_chat_history_returns_text_turns(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOMENTUM_TEST_MYSQL_URL", raising=False)
+    database_path = tmp_path / "history-api.sqlite3"
+    database_url = str(database_path)
+    _store_cache.pop(database_url, None)
+    store = SQLiteTaskStore(database_path)
+    handler_type = type("HistoryApiHandler", (MomentumHandler,), {"database_url": database_url})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_type)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        user_id = f"history-api-{uuid.uuid4().hex}"
+        password = f"pw-{uuid.uuid4().hex}"
+        http_call(base_url, "POST", "/api/register",
+                  payload={"user_id": user_id, "display_name": user_id, "password": password})
+        status, payload = http_call(base_url, "POST", "/api/login",
+                                    payload={"user_id": user_id, "password": password})
+        assert status == HTTPStatus.OK, payload
+        token = payload["token"]
+
+        agent_app._save_history(user_id, [{"role": "user", "content": "持久化的提问"}], store)
+        agent_app._conversation_history.clear()
+
+        status, payload = http_call(base_url, "GET", "/api/chat/history", token=token)
+        assert status == HTTPStatus.OK, payload
+        assert payload["turns"] == [{"role": "user", "content": "持久化的提问"}], payload
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        _store_cache.pop(database_url, None)
+
