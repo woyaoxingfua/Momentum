@@ -7,14 +7,16 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import socket
 import tempfile
 
 import pytest
 
+from momentum_agent import config as config_module
 from momentum_agent import setup_wizard
-from momentum_agent.storage import SQLiteTaskStore
+from momentum_agent.storage import SQLiteTaskStore, create_task_store
 
 
 class Answer:
@@ -240,3 +242,58 @@ def test_security_is_silent_when_change_is_not_needed(console, store):
     assert (changed, admin) == (False, None)
     assert fake.prompts == [], fake.prompts
 
+
+
+# ── 完整交互式流程（run_wizard 编排本身） ──────────────────────
+
+def test_full_interactive_wizard_persists_a_working_configuration(tmp_path, monkeypatch):
+    """把 11 步走完：断言落盘文件、user_memory、口令轮换与不启动 serve。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config_module, "load_dotenv", lambda *args, **kwargs: None)
+    port = free_port()
+    fake = ScriptedQuestionary(
+        "sqlite",                      # 1/11 后端
+        "tasks.db",                    # 1/11 文件路径（相对 -> 绝对）
+        "newpassword1", "newpassword1",  # 2/11 新口令 x2
+        False,                         # 2/11 不注册新管理员
+        "none",                        # 3/11 AI 提供商：跳过
+        False,                         # 4/11 关闭视觉
+        "240", "09:00", "18:00",       # 4/11 偏好
+        "上海",                         # 5/11 位置
+        False,                         # 6/11 关闭心跳
+        "127.0.0.1", str(port),        # 7/11 Web 监听
+        False,                         # 8/11 不启用 MCP
+        "INFO", "logs", "10", "5",     # 9/11 日志
+        False,                         # 10/11 跳过进阶
+        False,                         # 11/11 不启动 serve
+    )
+    monkeypatch.setattr(setup_wizard, "_import_questionary", lambda: fake)
+    # step_preview 内部直接 import 真实 questionary（会真交互），这里替换为确认
+    monkeypatch.setattr(setup_wizard, "step_preview", lambda console, result: True)
+
+    # 不跳过 DB 检查：step_database 会因此返回 needs_password_change=True，弱口令轮换才会被执行
+    result = setup_wizard.run_wizard(db_url=None, skip_db_check=False)
+
+    assert result.database_url and result.database_url.startswith("sqlite:///")
+    assert str(tmp_path) in result.database_url.replace("/", os.sep) or str(tmp_path) in result.database_url
+
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "MOMENTUM_DATABASE_URL=" in env_text
+    assert "MOMENTUM_LOG_LEVEL=INFO" in env_text, env_text
+
+    config = json.loads((tmp_path / "momentum.config.json").read_text(encoding="utf-8"))
+    assert config["web"] == {"host": "127.0.0.1", "port": port}, config
+    assert "mcp" not in config, config
+
+    store = create_task_store(result.database_url)
+    user_id = "default"
+    memory = store.get_all_memory(user_id=user_id)
+    assert memory.get("provider") == "none", memory
+    assert memory.get("user_location") == "上海", memory
+    assert memory.get("daily_capacity_minutes") == "240", memory
+    assert json.loads(memory["heartbeat_config"])["enabled"] is False, memory
+
+    assert result.default_password_changed is True, "弱口令必须被轮换"
+    assert store.login_user("default", "momentum") is None
+    assert store.login_user("default", "newpassword1") is not None
+    assert result.started_server is False
