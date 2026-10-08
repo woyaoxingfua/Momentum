@@ -68,9 +68,9 @@ def _install_fake_runner(
     monkeypatch.setattr(agent_app, "_build_output_guardrail", _guardrail)
     monkeypatch.setattr(agent_app, "_build_run_config", lambda *args, **kwargs: object())
     monkeypatch.setattr(agent_app, "_make_hooks", lambda: object())
-    monkeypatch.setattr(agent_app, "_get_history", lambda _user_id: [])
+    monkeypatch.setattr(agent_app, "_get_history", lambda _user_id, store=None: [])
     saved_history = []
-    monkeypatch.setattr(agent_app, "_save_history", lambda _user_id, history: saved_history.append(history))
+    monkeypatch.setattr(agent_app, "_save_history", lambda _user_id, history, store=None: saved_history.append(history))
     return counters, saved_history
 
 
