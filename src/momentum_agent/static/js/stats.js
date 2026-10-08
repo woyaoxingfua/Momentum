@@ -1,5 +1,5 @@
-import { requestJson } from "/js/api.js";
-import { getEstimationAccuracyDisplay } from "/js/estimation-accuracy.mjs";
+import { requestJson } from "./api.js";
+import { getEstimationAccuracyDisplay } from "./estimation-accuracy.mjs";
 import { getDailyWorkloadEstimate, taskDueLocalDate } from "./daily-workload.mjs";
 
 const DAILY_WORKLOAD_REFRESH_KEY = "momentum_daily_workload_refresh";
