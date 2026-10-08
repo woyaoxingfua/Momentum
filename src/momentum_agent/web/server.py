@@ -134,6 +134,7 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/stats": _handlers.handle_get_stats,
         "/api/notifications/upcoming": _handlers.handle_get_upcoming_notifications,
         "/api/focus/stats": _handlers.handle_get_focus_stats,
+        "/api/approvals": _handlers.handle_list_approvals,
     }
 
     GET_PREFIX_ROUTES = {
@@ -169,6 +170,8 @@ class MomentumHandler(BaseHTTPRequestHandler):
         "/api/focus/start": _handlers.handle_start_focus,
         "/api/frequent/recreate": _handlers.handle_recreate_frequent_task,
         "/api/focus/finish": _handlers.handle_finish_focus,
+        "/api/approvals/approve": _handlers.handle_approve_approval,
+        "/api/approvals/reject": _handlers.handle_reject_approval,
     }
 
     POST_PREFIX_ROUTES = {

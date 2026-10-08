@@ -171,6 +171,25 @@ def create_task_tools(store: 'TaskStore', user_id: str):
         Args:
             task_id: 任务ID
         """
+        from ...approvals import create_pending, is_gated
+
+        if is_gated("drop_task"):
+            # 高风险操作不直接执行：登记待确认项，由用户在界面/CLI 批准后才真正放弃。
+            existing = store.get_task_for_user(task_id, user_id)
+            if existing is None:
+                return f"任务 #{task_id} 不存在或不属于你"
+            pending = create_pending(
+                store,
+                tool="drop_task",
+                arguments={"task_id": int(task_id)},
+                user_id=user_id,
+                summary=f"放弃任务 #{task_id}「{existing.title}」",
+            )
+            return (
+                f"放弃任务需要你确认：{pending['summary']}。"
+                f"待确认编号 {pending['id']}，请在「待确认操作」里批准或取消。"
+            )
+
         task = store.drop_task(task_id, user_id=user_id)
         if not task:
             return f"任务 #{task_id} 不存在或不属于你"

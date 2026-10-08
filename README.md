@@ -39,6 +39,9 @@ Momentum 是一个 **本地优先（Local-first）** 的任务与专注系统，
 
 ### 3) MCP Server（让外部 AI Agent 调用 Momentum）
 - 把全部 **49 个工具**通过标准 MCP 协议暴露给外部 AI 助手
+- **破坏性操作审批**：`drop_task`（放弃任务）默认不直接执行——Agent 与 MCP 只会登记一条待确认项，
+  由你在界面或 CLI 批准后才真正放弃。可用 `MOMENTUM_APPROVAL_REQUIRED_TOOLS` 调整受保护的工具，
+  设为 `none` 关闭门禁。
 - 支持本地 **stdio**、推荐的远程 **Streamable HTTP**，以及兼容旧客户端的 **SSE**
 - 可选 API Key 鉴权，远程调用更安全
 - 零重复代码：复用项目已有的 `function_tool` 定义
@@ -274,6 +277,29 @@ curl -X POST http://127.0.0.1:8765/api/tasks/42/done \
 `/api/import` 与 `/api/export` 共用 **16 MiB（16,777,216 字节）**上限。导入按完整 UTF-8 HTTP 请求体计量（包含外层 `{"data": ...}` JSON 包装）；请求体超过上限时返回单个 JSON `413 Payload Too Large`，随后关闭连接，且不会解析或写入数据。导出按序列化后的 UTF-8 JSON 响应体计量；超过上限时返回 JSON `413` 错误，不发送附件头或备份响应片段。上限以内（包括恰好 16 MiB）的请求/导出允许通过。
 
 其他 JSON API 的请求体上限仍为 **2 MiB（2,097,152 字节）**，超限同样返回一次 JSON `413`；此限制不随备份路由放宽。
+
+
+### 破坏性操作审批（tool approval）
+
+高风险且不可逆的操作默认走审批，而不是模型说做就做：
+
+```bash
+# 查看待确认操作
+momentum-agent approvals
+# 批准并执行 / 取消
+momentum-agent approve <id>
+momentum-agent reject <id>
+```
+
+对应的 HTTP 接口是 `GET /api/approvals`、`POST /api/approvals/approve`、`POST /api/approvals/reject`。
+待确认项保存在 `user_memory` 的 `pending_approvals` 里，因此进程重启不会丢失；
+同一条待确认项无论批准还是取消都会被消费掉，不会被执行两次。
+受保护的工具通过环境变量配置（默认 `drop_task`）：
+
+```bash
+export MOMENTUM_APPROVAL_REQUIRED_TOOLS="drop_task,batch_complete_tasks"  # 逗号分隔
+export MOMENTUM_APPROVAL_REQUIRED_TOOLS="none"                            # 关闭门禁
+```
 
 ---
 

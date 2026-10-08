@@ -151,3 +151,45 @@ def test_plan_creates_subtasks(monkeypatch, capsys, cli_env):
     assert output.strip()
     assert cli_env["store"].list_tasks(status=None), "计划应产生任务"
 
+
+
+def test_cli_lists_and_approves_pending_operations(monkeypatch, capsys, cli_env):
+    """破坏性操作被门禁拦下后，必须能用 CLI 看到并批准。"""
+    import json as _json
+
+    from momentum_agent import approvals
+
+    monkeypatch.delenv("MOMENTUM_APPROVAL_REQUIRED_TOOLS", raising=False)
+    task = cli_env["store"].create_task("CLI 待确认任务")
+    cli_env["store"].set_memory(
+        approvals.PENDING_MEMORY_KEY,
+        _json.dumps([{"id": "cli001", "tool": "drop_task", "arguments": {"task_id": task.id},
+                      "summary": f"放弃任务 #{task.id}", "created_at": "2026-10-08T00:00:00+00:00"}]),
+        user_id="default",
+    )
+
+    listing = run_cli(monkeypatch, capsys, cli_env["url"], "approvals")
+    assert "cli001" in listing, listing
+    assert "放弃任务" in listing, listing
+
+    approved = run_cli(monkeypatch, capsys, cli_env["url"], "approve", "cli001")
+    assert "已放弃" in approved, approved
+    assert cli_env["store"]._get_task(task.id).status.value == "dropped"
+
+
+def test_cli_rejects_a_pending_operation(monkeypatch, capsys, cli_env):
+    import json as _json
+
+    from momentum_agent import approvals
+
+    task = cli_env["store"].create_task("CLI 取消任务")
+    cli_env["store"].set_memory(
+        approvals.PENDING_MEMORY_KEY,
+        _json.dumps([{"id": "cli002", "tool": "drop_task", "arguments": {"task_id": task.id},
+                      "summary": "放弃任务", "created_at": "2026-10-08T00:00:00+00:00"}]),
+        user_id="default",
+    )
+    rejected = run_cli(monkeypatch, capsys, cli_env["url"], "reject", "cli002")
+    assert "已取消" in rejected, rejected
+    assert cli_env["store"]._get_task(task.id).status.value == "todo"
+    assert run_cli(monkeypatch, capsys, cli_env["url"], "approvals").find("cli002") == -1

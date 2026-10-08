@@ -1329,6 +1329,48 @@ def handle_get_upcoming_notifications(handler: MomentumHandler, user_id: str) ->
     result.sort(key=lambda x: x["minutes_left"])
     handler.send_json({"notifications": result})
 
+# ── 待确认操作（破坏性操作审批） ─────────────────────────────────
+
+def handle_list_approvals(handler: MomentumHandler, user_id: str) -> None:
+    from ..approvals import gated_tools, list_pending
+
+    handler.send_json({
+        "approvals": list_pending(handler.store, user_id),
+        "gated_tools": list(gated_tools()),
+    })
+
+
+def handle_approve_approval(handler: MomentumHandler, user_id: str) -> None:
+    from ..approvals import execute, take_pending
+
+    payload = handler.read_json()
+    approval_id = str(payload.get("id", "")).strip()
+    if not approval_id:
+        handler.send_json({"error": "缺少待确认编号。"}, HTTPStatus.BAD_REQUEST)
+        return
+    pending = take_pending(handler.store, user_id, approval_id)
+    if pending is None:
+        handler.send_json({"error": "没有找到这条待确认操作。"}, HTTPStatus.NOT_FOUND)
+        return
+    message = execute(handler.store, pending, user_id)
+    handler.send_json({"message": message, "approval": pending})
+
+
+def handle_reject_approval(handler: MomentumHandler, user_id: str) -> None:
+    from ..approvals import take_pending
+
+    payload = handler.read_json()
+    approval_id = str(payload.get("id", "")).strip()
+    if not approval_id:
+        handler.send_json({"error": "缺少待确认编号。"}, HTTPStatus.BAD_REQUEST)
+        return
+    pending = take_pending(handler.store, user_id, approval_id)
+    if pending is None:
+        handler.send_json({"error": "没有找到这条待确认操作。"}, HTTPStatus.NOT_FOUND)
+        return
+    handler.send_json({"message": f"已取消：{pending.get('summary') or '该操作'}"})
+
+
 
 def handle_get_stats(handler: MomentumHandler, user_id: str) -> None:
     """仪表盘统计 API：返回完成趋势、优先级分布、时段热力、专注趋势"""

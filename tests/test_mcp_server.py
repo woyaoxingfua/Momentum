@@ -355,8 +355,20 @@ class TestToolCalls:
         updated = _get_task(store, task.id)
         assert updated.due_at > original_due
 
-    def test_drop_and_reopen(self, server, store, user_id):
+    def test_drop_and_reopen(self, server, store, user_id, monkeypatch):
+        from momentum_agent import approvals
+
         task = store.create_task("要放弃", user_id=user_id)
+
+        # 破坏性操作默认需要审批：MCP 这一面同样只登记待确认项，不直接放弃。
+        content = _call_tool(server, "drop_task", {"task_id": task.id})
+        assert "需要你确认" in content[0].text, content[0].text
+        assert _get_task(store, task.id).status == TaskStatus.TODO
+        assert len(approvals.list_pending(store, user_id)) == 1
+        approvals.take_pending(store, user_id, approvals.list_pending(store, user_id)[0]["id"])
+
+        # 关闭门禁后验证状态流转本身（门禁行为由 tests/test_approvals.py 覆盖）。
+        monkeypatch.setenv("MOMENTUM_APPROVAL_REQUIRED_TOOLS", "none")
         _call_tool(server, "drop_task", {"task_id": task.id})
         assert _get_task(store, task.id).status == TaskStatus.DROPPED
         _call_tool(server, "reopen_task", {"task_id": task.id})

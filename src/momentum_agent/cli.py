@@ -74,6 +74,11 @@ def main() -> None:
 
     subparsers.add_parser("reopen", help="Reopen a done/dropped task.").add_argument("task_id", type=int)
 
+    subparsers.add_parser("approvals", help="List pending destructive operations awaiting approval.")
+    approve_parser = subparsers.add_parser("approve", help="Approve and execute a pending operation.")
+    approve_parser.add_argument("approval_id")
+    reject_parser = subparsers.add_parser("reject", help="Cancel a pending operation.")
+    reject_parser.add_argument("approval_id")
     subparsers.add_parser("advise", help="Show the best next action for today.")
     subparsers.add_parser("review", help="Show a concise daily task review.")
     subparsers.add_parser("provider", help="Show configured agent provider.")
@@ -193,6 +198,25 @@ def main() -> None:
         print(start_task_cmd(store, args.task_id, user_id=user_id))
     elif args.command == "reopen":
         print(reopen_task_cmd(store, args.task_id, user_id=user_id))
+    elif args.command == "approvals":
+        from .approvals import gated_tools, list_pending
+
+        pending = list_pending(store, user_id)
+        if not pending:
+            print(f"没有待确认的操作。（受保护的工具：{', '.join(gated_tools()) or '无'}）")
+        else:
+            for item in pending:
+                print(f"{item['id']}  {item['summary']}（{item['created_at']}）")
+    elif args.command == "approve":
+        from .approvals import execute, take_pending
+
+        pending = take_pending(store, user_id, args.approval_id)
+        print(execute(store, pending, user_id) if pending else "没有找到这条待确认操作。")
+    elif args.command == "reject":
+        from .approvals import take_pending
+
+        pending = take_pending(store, user_id, args.approval_id)
+        print(f"已取消：{pending.get('summary')}" if pending else "没有找到这条待确认操作。")
     elif args.command == "advise":
         print(local_advice(store, user_id=user_id))
     elif args.command == "review":
