@@ -24,9 +24,14 @@ class MockHandler:
         self._body = json.dumps(payload).encode()
 
 
-@pytest.fixture
-def store(tmp_path):
-    return TaskStore(tmp_path / "focus.db")
+@pytest.fixture(params=["sqlite", "mysql"])
+def store(request, tmp_path):
+    """同一批专注断言的两种后端；未配置 MySQL 时自动跳过该分支。"""
+    if request.param == "sqlite":
+        return TaskStore(tmp_path / "focus.db")
+    from backend_fixtures import fresh_mysql_store
+
+    return fresh_mysql_store()
 
 
 def test_actual_focus_record_preserves_seconds_and_is_idempotent(store):
@@ -222,11 +227,19 @@ def test_concurrent_different_finish_payloads_have_one_winner_and_one_conflict(s
     ]
     assert len(stored) == 1
     assert stored[0]["actual_seconds"] == successful["actual_seconds"]
+    # 占位符与取值方式在两个后端不同（SQLite 用 ?，MySQL 用 %s 且返回 dict），
+    # 这里显式适配，保证这条并发断言在两种后端上都真正执行。
+    placeholder = "%s" if type(store).__name__.startswith("MySQL") else "?"
     with store._connect() as conn:
-        event_count = conn.execute(
-            "SELECT COUNT(*) FROM task_events WHERE task_id = ? AND event_type = 'focus_session'",
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM task_events"
+            f" WHERE task_id = {placeholder} AND event_type = 'focus_session'",
             (task.id,),
-        ).fetchone()[0]
+        )
+        row = cursor.fetchone()
+    # sqlite3.Row 支持下标但不支持 .values()；pymysql 的 DictCursor 反过来
+    event_count = next(iter(row.values())) if isinstance(row, dict) else row[0]
     assert event_count == 1
 
 

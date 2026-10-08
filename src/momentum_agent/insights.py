@@ -371,8 +371,8 @@ class InsightsEngine:
             elif prev_done > 0 and recent_done < prev_done * 0.6:
                 profile.burnout_risk = "medium"
 
-        # ── 一致性得分 ──────────────────────────────────────
-        profile.consistency_score = self._calc_consistency(conn, user_id)
+            # ── 一致性得分 ──────────────────────────────────────
+            profile.consistency_score = self._calc_consistency(conn, user_id)
 
         return profile
 
