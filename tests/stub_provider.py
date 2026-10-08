@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -134,8 +135,12 @@ class _StubHandler(BaseHTTPRequestHandler):
             self.wfile.write(self._frame({}, finish="tool_calls"))
         else:
             text = turn.get("text") or ""
+            delay = float(turn.get("delay") or 0)
             for piece in turn.get("pieces") or [text[i:i + 3] for i in range(0, len(text), 3)]:
                 self.wfile.write(self._frame({"content": piece}))
+                self.wfile.flush()
+                if delay:
+                    time.sleep(delay)
             self.wfile.write(self._frame({}, finish="stop"))
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()

@@ -1,9 +1,49 @@
 let chatLog, chatInput;
 let onAfterChat = null;
+let activeStream = null;
+
+
+// 流式生成期间允许用户「停止」：中断 fetch，服务端会因客户端断开而结束这一轮
+// （归档的 RunState/取消项里，客户端侧可先交付的正是这部分；工具副作用已执行的不会回滚，
+//  与既有的 fail-closed 语义一致）。
+function setCancelButtonVisible(visible) {
+  if (typeof document === "undefined") return;
+  const button = document.getElementById("chatCancelButton");
+  if (button) button.hidden = !visible;
+}
+
+function beginStreaming() {
+  const controller = new AbortController();
+  activeStream = controller;
+  setCancelButtonVisible(true);
+  return controller;
+}
+
+function endStreaming() {
+  activeStream = null;
+  setCancelButtonVisible(false);
+}
+
+export function isChatStreaming() {
+  return activeStream !== null;
+}
+
+export function cancelChat() {
+  if (!activeStream) return false;
+  activeStream.abort();
+  return true;
+}
 
 export function initChat(log, input) {
   chatLog = log;
   chatInput = input;
+  if (typeof document !== "undefined") {
+    const cancelButton = document.getElementById("chatCancelButton");
+    if (cancelButton) {
+      cancelButton.addEventListener("click", () => { cancelChat(); });
+      cancelButton.hidden = true;
+    }
+  }
 }
 
 
@@ -302,10 +342,12 @@ export async function sendChat(event) {
     const token = localStorage.getItem("momentum_token");
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
+    const controller = beginStreaming();
     const response = await fetch("/api/chat/stream", {
       method: "POST",
       headers,
       body: JSON.stringify({ message }),
+      signal: controller.signal,
     });
 
     if (response.status === 401) {
@@ -322,7 +364,14 @@ export async function sendChat(event) {
 
     await handleStreamResponse(response, agentItem);
   } catch (err) {
-    agentItem.textContent = `连接失败：${err.message}`;
+    if (err && err.name === "AbortError") {
+      const current = agentItem.textContent === "…" ? "" : agentItem.textContent;
+      agentItem.textContent = `${current}（已停止生成）`;
+    } else {
+      agentItem.textContent = `连接失败：${err.message}`;
+    }
+  } finally {
+    endStreaming();
   }
 
   if (onAfterChat) await onAfterChat();
@@ -351,10 +400,12 @@ export async function sendToAgent(message) {
     const token = localStorage.getItem("momentum_token");
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
+    const controller = beginStreaming();
     const response = await fetch("/api/chat/stream", {
       method: "POST",
       headers,
       body: JSON.stringify({ message }),
+      signal: controller.signal,
     });
 
     if (response.status === 401) {
@@ -371,7 +422,14 @@ export async function sendToAgent(message) {
 
     await handleStreamResponse(response, agentItem);
   } catch (err) {
-    agentItem.textContent = `连接失败：${err.message}`;
+    if (err && err.name === "AbortError") {
+      const current = agentItem.textContent === "…" ? "" : agentItem.textContent;
+      agentItem.textContent = `${current}（已停止生成）`;
+    } else {
+      agentItem.textContent = `连接失败：${err.message}`;
+    }
+  } finally {
+    endStreaming();
   }
 
   // 移动端：同步聊天记录

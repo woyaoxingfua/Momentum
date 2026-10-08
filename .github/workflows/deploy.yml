@@ -80,6 +80,9 @@ jobs:
       # 这条用例在真实浏览器里数请求，确认当前实现下一次点击只发一个 POST、只 +1 天。
       - name: Browser regression — postpone sends exactly one POST
         run: python tests/frontend/postpone_single_post_browser.py
+      # 归档的取消/中断项：生成过程中必须能停，而不是只能等它说完。
+      - name: Browser regression — stop a streaming reply
+        run: python tests/frontend/chat_cancel_browser.py
       # 破坏性操作被门禁拦下后，用户必须在界面上能批准/取消：这条用例走完整 UI 流程。
       - name: Browser regression — approval panel (approve / reject)
         run: python tests/frontend/approval_panel_browser.py
