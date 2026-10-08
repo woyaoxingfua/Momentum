@@ -439,7 +439,7 @@ def handle_chat_stream(handler: MomentumHandler, user_id: str) -> None:
 def handle_chat_clear(handler: MomentumHandler, user_id: str) -> None:
     """清除用户的对话历史"""
     from ..agent_app import clear_conversation_history
-    clear_conversation_history(user_id)
+    clear_conversation_history(user_id, store=handler.store)
     handler.send_json({"message": "对话历史已清除"})
 
 def handle_advice(handler: MomentumHandler, user_id: str) -> None:

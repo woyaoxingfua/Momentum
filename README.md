@@ -279,6 +279,12 @@ curl -X POST http://127.0.0.1:8765/api/tasks/42/done \
 其他 JSON API 的请求体上限仍为 **2 MiB（2,097,152 字节）**，超限同样返回一次 JSON `413`；此限制不随备份路由放宽。
 
 
+### 对话历史会落库
+
+对话上下文保存在该用户的 `user_memory.chat_history` 里（内存只作热缓存），因此**重启服务、
+或同一数据库上有多个 worker 时，上下文都不会丢**；`POST /api/chat/clear` 会同时清掉内存与存储。
+历史按 `MAX_HISTORY_ITEMS` 截断，避免无限增长。
+
 ### 破坏性操作审批（tool approval）
 
 高风险且不可逆的操作默认走审批，而不是模型说做就做：

@@ -12,6 +12,7 @@ from .models import ParsedTaskOutput, PlanOutput, Priority, TaskStatus
 from .parser import ParsedTask, parse_task_text
 from .planner import create_task_plan
 from .storage import TaskStore, create_task_store
+import json
 
 log = get_logger("agent")
 
@@ -26,19 +27,67 @@ MAX_HISTORY_ITEMS = 40  # 保留最近 40 条消息（约 20 轮对话）
 _agent_cache: dict[tuple, object] = {}
 
 
-def _get_history(user_id: str) -> list:
-    """获取用户的对话历史"""
-    return list(_conversation_history.get(user_id, []))
+CHAT_HISTORY_MEMORY_KEY = "chat_history"
 
 
-def _save_history(user_id: str, history: list) -> None:
-    """保存对话历史，截断到最近 MAX_HISTORY 条"""
-    _conversation_history[user_id] = history[-MAX_HISTORY_ITEMS:]
+def _load_history_from_store(store, user_id: str) -> list:
+    """从存储里读回对话历史（重启/多 worker 场景）。"""
+    if store is None:
+        return []
+    try:
+        raw = store.get_memory(CHAT_HISTORY_MEMORY_KEY, user_id=user_id)
+    except Exception as exc:
+        log.warning("读取对话历史失败：%s", exc)
+        return []
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return items if isinstance(items, list) else []
 
 
-def _clear_history(user_id: str) -> None:
-    """清除用户对话历史"""
+def _get_history(user_id: str, store=None) -> list:
+    """获取用户的对话历史。
+
+    归档的「会话存储边界」指出：对话历史原先只放在进程内存里，重启即丢、多 worker 也不共享。
+    现在优先用内存缓存（热路径不变），缓存未命中时从 store 读回，从而跨重启/跨进程一致。
+    """
+    cached = _conversation_history.get(user_id)
+    if cached:
+        return list(cached)
+    items = _load_history_from_store(store, user_id)
+    if items:
+        _conversation_history[user_id] = items[-MAX_HISTORY_ITEMS:]
+    return list(items)
+
+
+def _save_history(user_id: str, history: list, store=None) -> None:
+    """保存对话历史，截断到最近 MAX_HISTORY 条，并落库以便重启后仍在。"""
+    trimmed = history[-MAX_HISTORY_ITEMS:]
+    _conversation_history[user_id] = trimmed
+    if store is None:
+        return
+    try:
+        store.set_memory(
+            CHAT_HISTORY_MEMORY_KEY,
+            json.dumps(trimmed, ensure_ascii=False, default=str),
+            user_id=user_id,
+        )
+    except Exception as exc:
+        log.warning("保存对话历史失败：%s", exc)
+
+
+def _clear_history(user_id: str, store=None) -> None:
+    """清除用户对话历史（内存与存储一起清）。"""
     _conversation_history.pop(user_id, None)
+    if store is None:
+        return
+    try:
+        store.set_memory(CHAT_HISTORY_MEMORY_KEY, "", user_id=user_id)
+    except Exception as exc:
+        log.warning("清除对话历史失败：%s", exc)
 
 
 __all__ = [
@@ -698,7 +747,7 @@ async def run_agent_message(
     out_guardrail = await _build_output_guardrail()
 
     # 构建带历史记录的输入
-    history = _get_history(user_id)
+    history = _get_history(user_id, store)
     if image_base64:
         agent_input = history + [
             {
@@ -735,7 +784,7 @@ async def run_agent_message(
 
     reply = result.final_output
     # 保存对话历史
-    _save_history(user_id, result.to_input_list())
+    _save_history(user_id, result.to_input_list(), store)
     log.info("agent done: user=%r len=%d history=%d", user_id, len(reply), len(_get_history(user_id)))
     return reply
 
@@ -812,7 +861,7 @@ async def run_agent_message_stream(
     guardrail = await _build_input_guardrail()
     out_guardrail = await _build_output_guardrail()
 
-    history = _get_history(user_id)
+    history = _get_history(user_id, store)
     if image_base64:
         agent_input = history + [
             {
@@ -857,7 +906,7 @@ async def run_agent_message_stream(
                     yield {"type": "chunk", "text": data.delta}
 
         if result.is_complete:
-            _save_history(user_id, result.to_input_list())
+            _save_history(user_id, result.to_input_list(), store)
             yield {"type": "done"}
             log.info("agent stream done (real streaming): user=%r", user_id)
             return
@@ -951,6 +1000,6 @@ def should_review(message: str) -> bool:
     return any(marker in message for marker in review_markers)
 
 
-def clear_conversation_history(user_id: str = DEFAULT_USER_ID) -> None:
-    """清除用户的对话历史"""
-    _clear_history(user_id)
+def clear_conversation_history(user_id: str = DEFAULT_USER_ID, store=None) -> None:
+    """清除用户的对话历史（传入 store 时连持久化历史一起清）。"""
+    _clear_history(user_id, store)
