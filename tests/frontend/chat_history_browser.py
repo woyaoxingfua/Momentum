@@ -100,11 +100,19 @@ def main() -> int:
 
             # 本地模式（未配置 provider）下对话会立即走本地解析，用于产生真实的一轮问答。
             page.locator("#chatInput").fill(question)
-            page.locator("#chatForm button[type=submit], #chatForm button").first.click()
+            page.locator("#chatForm button[type=submit]").click()
+            # 注意：气泡是先插入「…」占位再被填充的，所以「气泡数 >= 2」并不代表这一轮结束了，
+            # 更不能代表历史已落库（CI 上就因此吃过一次失败）。这里等真正的回答文本出现。
             page.wait_for_function(
-                "() => document.querySelectorAll('#chatLog .message').length >= 2",
-                timeout=20_000,
+                """() => {
+                     const items = document.querySelectorAll("#chatLog .message.agent");
+                     if (!items.length) return false;
+                     const text = items[items.length - 1].textContent.trim();
+                     return text.length > 0 && text !== "…";
+                   }""",
+                timeout=30_000,
             )
+            page.wait_for_timeout(800)  # 给历史落库留出时间，再刷新
             before = page.locator("#chatLog .message").count()
             check("对话产生了问答气泡", before >= 2, f"{before} 条")
 
@@ -113,7 +121,7 @@ def main() -> int:
             page.wait_for_selector("#taskInput", timeout=15_000)
             page.wait_for_function(
                 "() => document.querySelectorAll('#chatLog .message').length >= 2",
-                timeout=15_000,
+                timeout=25_000,
             )
             after = page.locator("#chatLog .message").count()
             check("刷新后历史仍然可见", after >= 2, f"{after} 条")
