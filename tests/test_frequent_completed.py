@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from momentum_agent.auth import hash_password
+from backend_fixtures import fetch_scalar, run_sql
 from momentum_agent.frequent import (
     MIN_DISTINCT_TASKS,
     aggregate_frequent_tasks,
@@ -19,9 +20,15 @@ from momentum_agent.storage import SQLiteTaskStore
 PASSWORD = "frequent-completed-password"
 
 
-@pytest.fixture
-def store(tmp_path):
-    database = SQLiteTaskStore(tmp_path / "frequent.db")
+@pytest.fixture(params=["sqlite", "mysql"])
+def store(request, tmp_path):
+    """同一批「常完成」断言同时跑 SQLite 与 MySQL。"""
+    if request.param == "sqlite":
+        database = SQLiteTaskStore(tmp_path / "frequent.db")
+    else:
+        from backend_fixtures import fresh_mysql_store
+
+        database = fresh_mysql_store()
     for user_id in ("alice", "bob"):
         database.register_user(user_id, user_id, hash_password(PASSWORD))
     return database
@@ -42,21 +49,21 @@ def _complete(store, title, *, user_id="alice", priority=Priority.MEDIUM, minute
 
 def _backdate(store, task_id, days):
     moment = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    with store._connect() as conn:
-        conn.execute(
-            "UPDATE task_events SET created_at = ? WHERE task_id = ? "
-            "AND event_type = 'status_changed' AND payload = 'done'",
-            (moment, task_id),
-        )
+    run_sql(
+        store,
+        "UPDATE task_events SET created_at = {ph} WHERE task_id = {ph}"
+        " AND event_type = 'status_changed' AND payload = 'done'",
+        (moment, task_id),
+    )
 
 
 def _done_event_count(store, task_id):
-    with store._connect() as conn:
-        return conn.execute(
-            "SELECT COUNT(*) FROM task_events WHERE task_id = ? "
-            "AND event_type = 'status_changed' AND payload = 'done'",
-            (task_id,),
-        ).fetchone()[0]
+    return fetch_scalar(
+        store,
+        "SELECT COUNT(*) FROM task_events WHERE task_id = {ph}"
+        " AND event_type = 'status_changed' AND payload = 'done'",
+        (task_id,),
+    )
 
 
 def _groups(store, *, user_id="alice", days=180, min_distinct=MIN_DISTINCT_TASKS):

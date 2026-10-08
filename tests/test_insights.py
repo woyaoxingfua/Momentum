@@ -6,6 +6,7 @@ import pytest
 
 from momentum_agent.insights import InsightsEngine, BehavioralProfile, Insight
 from momentum_agent.models import Priority, TaskStatus
+from backend_fixtures import run_sql
 from momentum_agent.storage import TaskStore
 
 
@@ -155,15 +156,17 @@ class TestEvidenceBasedTimeInsights:
         created_at = now - timedelta(hours=7)
         completed_at = now - timedelta(hours=2)
         later_update_at = now - timedelta(hours=1)
-        with store._connect() as conn:
-            conn.execute(
-                "UPDATE tasks SET created_at = ?, updated_at = ? WHERE id = ?",
-                (created_at.isoformat(), later_update_at.isoformat(), task.id),
-            )
-            conn.execute(
-                "UPDATE task_events SET created_at = ? WHERE task_id = ? AND event_type = 'status_changed' AND payload = 'done'",
-                (completed_at.isoformat(), task.id),
-            )
+        run_sql(
+            store,
+            "UPDATE tasks SET created_at = {ph}, updated_at = {ph} WHERE id = {ph}",
+            (created_at.isoformat(), later_update_at.isoformat(), task.id),
+        )
+        run_sql(
+            store,
+            "UPDATE task_events SET created_at = {ph} WHERE task_id = {ph}"
+            " AND event_type = 'status_changed' AND payload = 'done'",
+            (completed_at.isoformat(), task.id),
+        )
 
         store.record_focus_session(
             task.id,
@@ -213,22 +216,23 @@ class TestEvidenceBasedTimeInsights:
             tasks.append(task)
 
         now = datetime.now(timezone.utc)
-        with store._connect() as conn:
-            for index, task in enumerate(tasks):
-                completed_at = now - timedelta(seconds=101 - index)
-                conn.execute(
-                    "UPDATE tasks SET created_at = ?, updated_at = ? WHERE id = ?",
-                    (
-                        (completed_at - timedelta(hours=1)).isoformat(),
-                        completed_at.isoformat(),
-                        task.id,
-                    ),
-                )
-                conn.execute(
-                    "UPDATE task_events SET created_at = ? "
-                    "WHERE task_id = ? AND event_type = 'status_changed' AND payload = 'done'",
-                    (completed_at.isoformat(), task.id),
-                )
+        for index, task in enumerate(tasks):
+            completed_at = now - timedelta(seconds=101 - index)
+            run_sql(
+                store,
+                "UPDATE tasks SET created_at = {ph}, updated_at = {ph} WHERE id = {ph}",
+                (
+                    (completed_at - timedelta(hours=1)).isoformat(),
+                    completed_at.isoformat(),
+                    task.id,
+                ),
+            )
+            run_sql(
+                store,
+                "UPDATE task_events SET created_at = {ph}"
+                " WHERE task_id = {ph} AND event_type = 'status_changed' AND payload = 'done'",
+                (completed_at.isoformat(), task.id),
+            )
 
         for index, task in enumerate(tasks[:-1]):
             started_at = now - timedelta(days=40 if index == 1 else 1)

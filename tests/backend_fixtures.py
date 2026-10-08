@@ -35,3 +35,31 @@ def fresh_mysql_store() -> MySQLTaskStore:
     MySQLTaskStore._schema_initialized.discard(dsn)
     return MySQLTaskStore(dsn)
 
+
+
+def placeholder_for(store) -> str:
+    return "%s" if type(store).__name__.startswith("MySQL") else "?"
+
+
+def run_sql(store, sql: str, params: tuple = ()) -> None:
+    """在两个后端上执行同一条写语句；SQL 里用 {ph} 表示占位符。"""
+    statement = sql.format(ph=placeholder_for(store))
+    with store._connect() as connection:
+        cursor = connection.cursor()
+        cursor.execute(statement, params)
+        try:
+            connection.commit()
+        except Exception:
+            pass
+
+
+def fetch_scalar(store, sql: str, params: tuple = ()):
+    """取单值；SQL 里用 {ph} 表示占位符。"""
+    statement = sql.format(ph=placeholder_for(store))
+    with store._connect() as connection:
+        cursor = connection.cursor()
+        cursor.execute(statement, params)
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    return next(iter(row.values())) if isinstance(row, dict) else row[0]
