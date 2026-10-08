@@ -22,14 +22,33 @@ PROVIDER_VARS = (
 
 @pytest.fixture
 def cli_env(tmp_path, monkeypatch):
-    """隔离 DB、工作目录与 provider，确保不碰真实数据也不写进仓库。"""
+    """隔离 DB、工作目录、provider 与日志 handler。
+
+    cli.main() 会调用 init_from_env() 往 root logger 挂 StreamHandler；
+    若不回收，用例结束后 pytest 关掉捕获流，后续日志就会往已关闭的文件写，
+    刷出一堆 “I/O operation on closed file” 噪音。
+    """
+    import logging
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(config_module, "load_dotenv", lambda *args, **kwargs: None)
     for name in PROVIDER_VARS:
         monkeypatch.delenv(name, raising=False)
+
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
     database_path = tmp_path / "cli.sqlite3"
     store = SQLiteTaskStore(database_path)
-    return {"url": f"sqlite:///{database_path}", "store": store, "path": database_path}
+    try:
+        yield {"url": f"sqlite:///{database_path}", "store": store, "path": database_path}
+    finally:
+        for handler in list(root.handlers):
+            if handler not in handlers_before:
+                root.removeHandler(handler)
+                try:
+                    handler.close()
+                except Exception:
+                    pass
 
 
 def run_cli(monkeypatch, capsys, database_url, *args):
