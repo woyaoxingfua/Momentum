@@ -38,7 +38,7 @@ Momentum 是一个 **本地优先（Local-first）** 的任务与专注系统，
 - 支持记忆偏好与上下文，连续对话体验更好
 
 ### 3) MCP Server（让外部 AI Agent 调用 Momentum）
-- 把全部 **47 个工具**通过标准 MCP 协议暴露给外部 AI 助手
+- 把全部 **49 个工具**通过标准 MCP 协议暴露给外部 AI 助手
 - 支持本地 **stdio**、推荐的远程 **Streamable HTTP**，以及兼容旧客户端的 **SSE**
 - 可选 API Key 鉴权，远程调用更安全
 - 零重复代码：复用项目已有的 `function_tool` 定义
@@ -279,7 +279,7 @@ curl -X POST http://127.0.0.1:8765/api/tasks/42/done \
 
 ## 🔌 MCP Server — 让外部 AI Agent 调用 Momentum
 
-Momentum 把全部 47 个工具（任务 / 子任务 / 依赖 / 标签 / 笔记 / 洞察 / 天气 / 专注 / 心跳）通过标准 **MCP（Model Context Protocol）** 暴露出来，这样 Claude Desktop、Cursor、Cline 等外部 AI 助手就能直接读写你的任务数据。
+Momentum 把全部 49 个工具（任务 / 子任务 / 依赖 / 标签 / 笔记 / 洞察 / 天气 / 专注 / 心跳）通过标准 **MCP（Model Context Protocol）** 暴露出来，这样 Claude Desktop、Cursor、Cline 等外部 AI 助手就能直接读写你的任务数据。
 
 ### 安装 MCP 依赖
 
@@ -376,7 +376,7 @@ momentum-agent mcp
 | 洞察 | 4 | `get_insights` `get_behavioral_profile` `get_strategic_summary` |
 | 专注 | 6 | `get_next_best_task` `get_overdue_tasks` `get_completion_stats` |
 | 天气 | 5 | `get_current_weather` `plan_outdoor_activity` |
-| 扩展 | 7 | `get_all_tags` `save_note` `get_daily_review` `get_user_context` |
+| 扩展 | 9 | `get_all_tags` `save_note` `get_daily_review` `batch_complete_tasks` |
 
 天气默认从 [Open-Meteo](https://open-meteo.com/) 获取当前数据；常见城市直接使用内置坐标，其他城市通过其地理编码 API 解析。网络不可用时会返回明确错误，不会伪造随机天气。请遵守 Open-Meteo 的适用许可与署名要求。
 
@@ -419,7 +419,7 @@ src/momentum_agent/
 ├── static/               # 前端资源（原生 JS）
 ├── storage/              # SQLite / MySQL 存储实现
 └── agents/               # 工具与专家 Agent
-    └── tools/            # 47 个 function_tool 工厂（MCP 复用）
+    └── tools/            # 49 个 function_tool 工厂（MCP 复用）
 ```
 
 ---
