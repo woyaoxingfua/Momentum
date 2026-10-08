@@ -21,6 +21,9 @@ dev = [
 ]
 mysql = [
     "pymysql>=1.1",
+    # MySQL 8 / Azure MySQL 默认 caching_sha2_password，pymysql 做完整认证需要它；
+    # 少了这个包，连到 8.x 会直接报 "'cryptography' package is required"。
+    "cryptography>=42",
 ]
 mcp = [
     # The low-level Server API used here is the MCP SDK 1.x API.
