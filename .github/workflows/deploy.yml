@@ -71,6 +71,10 @@ jobs:
       - name: Browser regression — local-only attachments and frequent history
         run: python tests/frontend/local_first_browser.py
 
+      # 归档记录着「开始/暂停/恢复/停止的登录后 UI 流程尚未在真实浏览器确认」；
+      # 这条用例真实注册登录后走完该流程，并验证暂停时间不计入实际专注秒数。
+      - name: Browser regression — focus timer UI (pause / resume)
+        run: python tests/frontend/focus_timer_ui_browser.py
       # 该用例已在真实 Linux 上验证通过（WSL Ubuntu / Python 3.12，headless shell 与完整
       # Chromium 各跑一次，均 6/6），并排除了副本加载、pip editable 解析等差异；
       # 之前两次 CI 失败无法读取日志，因此这里保留一次重试以吸收 runner 抖动。
