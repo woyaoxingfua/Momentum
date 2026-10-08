@@ -41,8 +41,9 @@ jobs:
     # 浏览器回归是「建议性」的：会跑、会报，但不阻断部署（continue-on-error）。
     # 想把它变成硬门槛时，删掉 continue-on-error 并把本 job 加进 deploy 的 needs。
     runs-on: ubuntu-latest
+    # 现在是硬门槛：真实的 UI 回归会挡住部署。想放宽就恢复 continue-on-error 并把本 job
+    # 从 deploy 的 needs 里移除。
     needs: test
-    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -168,7 +169,8 @@ jobs:
 
 
   deploy:
-    needs: test
+    # 部署前必须通过：单元/接口测试、真实浏览器回归、真实 MySQL 整套回归。
+    needs: [test, browser, mysql-integration]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
     steps:

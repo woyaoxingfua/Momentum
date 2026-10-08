@@ -239,6 +239,13 @@ momentum-agent import backup.json
 
 # Agent 对话
 momentum-agent chat "帮我安排今天可完成的任务"
+
+# 对话历史 / 待确认操作 / provider 状态
+momentum-agent history
+momentum-agent approvals
+momentum-agent approve <id>
+momentum-agent reject <id>
+momentum-agent provider
 ```
 
 对周期任务，`done` 只有在任务真实从非完成状态变为已完成时才创建下一期；任务已完成时再次执行不会新建，先 `reopen` 后再次完成才会创建新一期。普通任务执行 `done` 只标记完成，不创建下一期。
@@ -306,6 +313,23 @@ momentum-agent reject <id>
 export MOMENTUM_APPROVAL_REQUIRED_TOOLS="drop_task,batch_complete_tasks"  # 逗号分隔
 export MOMENTUM_APPROVAL_REQUIRED_TOOLS="none"                            # 关闭门禁
 ```
+
+---
+
+## 🔄 CI 流水线
+
+`.github/workflows/deploy.yml` 有四个 job，**部署前必须全部通过**：
+
+| job | 内容 |
+|---|---|
+| `test` | Python 3.11 / 3.12 矩阵：单元与接口测试 + 前端 `node --test` |
+| `browser` | 真实 Chromium 的 8 条回归：专注恢复、附件与常完成、专注计时 UI（暂停不计时）、顺延只发一次、到期通知、对话历史回填、审批面板、Service Worker 升级 |
+| `mysql-integration` | 用真实 MySQL 8.4 跑**整套** pytest（含 SQLite/MySQL 双后端参数化的存储、专注、洞察、常完成、顺延套件） |
+| `deploy` | 前置 job 通过后 SSH 到服务器 `git pull` + `pip install` + 重启，并做**真实健康检查**（不健康即 exit 1） |
+
+`browser` 与 `mysql-integration` 曾经是建议性的（`continue-on-error`），现在是硬门槛：
+任何 UI 或数据库回归都会挡住部署。想临时放宽，给对应 job 加回 `continue-on-error: true`，
+并从 `deploy` 的 `needs` 里移除它。
 
 ---
 
