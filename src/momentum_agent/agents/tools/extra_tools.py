@@ -87,6 +87,30 @@ def create_extra_tools(store: "TaskStore", user_id: str):
         ctx = build_user_context(store.list_tasks(None, user_id=user_id), **prefs)
         return _review(store.list_tasks(None, user_id=user_id), ctx)
 
+    @function_tool
+    def batch_complete_tasks(task_ids: list[int]) -> str:
+        """批量完成任务
+
+        Args:
+            task_ids: 要完成的任务ID列表
+        """
+        from ...models import TaskStatus
+
+        count = store.batch_update_status(task_ids, TaskStatus.DONE, user_id=user_id)
+        return f"已完成 {count} 个任务"
+
+    @function_tool
+    def batch_start_tasks(task_ids: list[int]) -> str:
+        """批量开始任务
+
+        Args:
+            task_ids: 要开始的任务ID列表
+        """
+        from ...models import TaskStatus
+
+        count = store.batch_update_status(task_ids, TaskStatus.DOING, user_id=user_id)
+        return f"已开始 {count} 个任务"
+
     return [
         get_all_tags,
         get_tasks_by_tag,
@@ -95,4 +119,6 @@ def create_extra_tools(store: "TaskStore", user_id: str):
         get_my_notes,
         get_user_context,
         get_daily_review,
+        batch_complete_tasks,
+        batch_start_tasks,
     ]
