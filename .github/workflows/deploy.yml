@@ -140,10 +140,15 @@ jobs:
           sys.exit('mysql never became ready')
           PY
 
+      # tests/test_storage.py 的参数化 fixture 会在配置了 MOMENTUM_TEST_MYSQL_URL 时，
+      # 把同一套存储层断言同时跑在 SQLite 与 MySQL 上（88 项）。此前 MySQL 只有
+      # test_mysql_store.py 的 30 项覆盖，而线上用的是 MySQL。
       - name: MySQL integration tests
         env:
           MOMENTUM_TEST_MYSQL_URL: mysql://root:momentum-test-root@127.0.0.1:3306/momentum_test
-        run: pytest tests/test_mysql_store.py -q
+        run: |
+          pytest tests/test_storage.py tests/test_mysql_store.py -q
+
 
   deploy:
     needs: test

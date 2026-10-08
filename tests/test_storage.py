@@ -1,17 +1,50 @@
-"""Tests for the storage layer (TaskStore)."""
+"""Tests for the storage layer (TaskStore).
+
+同一套存储层断言同时跑 SQLite 与 MySQL：MySQLTaskStore 实现了同一份 866 语句的接口，
+但此前只有 test_mysql_store.py 里 30 个用例碰过它（覆盖率 49%），而线上用的是 MySQL。
+设置了 MOMENTUM_TEST_MYSQL_URL 时自动加跑 MySQL 分支，否则跳过。
+"""
+from __future__ import annotations
+
+import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from momentum_agent.models import Priority, TaskStatus, TaskRelationType
-from momentum_agent.storage import TaskStore
+from momentum_agent.storage import MySQLTaskStore, TaskStore
 
 
-@pytest.fixture
-def store(tmp_path):
-    """Create a fresh TaskStore for each test."""
-    return TaskStore(tmp_path / "test.db")
+def _fresh_mysql_store(dsn: str) -> MySQLTaskStore:
+    """清空该库并重建 schema，返回一个干净的 MySQL store。
+
+    注意：MySQLTaskStore._init_schema() 有按 DSN 的类级缓存，所以必须先把它清掉，
+    否则删表之后不会重建，用例会撞上「表不存在」。
+    """
+    store = MySQLTaskStore(dsn)
+    with store._connect() as connection:
+        cursor = connection.cursor()
+        cursor.execute("SET FOREIGN_KEY_CHECKS=0")
+        cursor.execute("SHOW TABLES")
+        # store 的 cursor 是 DictCursor，取的是值而不是键
+        tables = [next(iter(row.values())) for row in cursor.fetchall()]
+        for table in tables:
+            cursor.execute(f"DROP TABLE IF EXISTS `{table}`")
+        cursor.execute("SET FOREIGN_KEY_CHECKS=1")
+        connection.commit()
+    MySQLTaskStore._schema_initialized.discard(dsn)
+    return MySQLTaskStore(dsn)
+
+@pytest.fixture(params=["sqlite", "mysql"])
+def store(request, tmp_path):
+    """每个用例一个干净的后端；未配置 MySQL 时自动跳过该分支。"""
+    if request.param == "sqlite":
+        return TaskStore(tmp_path / "test.db")
+    url = os.environ.get("MOMENTUM_TEST_MYSQL_URL")
+    if not url:
+        pytest.skip("MOMENTUM_TEST_MYSQL_URL is not set")
+    return _fresh_mysql_store(url)
 
 
 @pytest.fixture
