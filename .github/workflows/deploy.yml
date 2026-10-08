@@ -79,6 +79,9 @@ jobs:
       # 这条用例在真实浏览器里数请求，确认当前实现下一次点击只发一个 POST、只 +1 天。
       - name: Browser regression — postpone sends exactly one POST
         run: python tests/frontend/postpone_single_post_browser.py
+      # 对话历史先落库、再在界面上回填：这条用例验证「刷新后对话仍在」以及清空后不再回填。
+      - name: Browser regression — chat history survives a reload
+        run: python tests/frontend/chat_history_browser.py
       # 归档记录「通知权限与休眠时投递未纳入浏览器 E2E」；休眠唤醒需要真机，
       # 这里覆盖可在 CI 确定复现的部分：授予权限后不可见页面轮询并真正构造通知。
       - name: Browser regression — upcoming notifications

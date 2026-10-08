@@ -72,6 +72,21 @@ def _load_history_from_store(store, user_id: str) -> list:
     return items if isinstance(items, list) else []
 
 
+def _record_local_turn(user_id: str, message: str, reply: str, store=None) -> None:
+    """把一次本地模式（未配置模型）的问答记入同一份持久化历史。
+
+    否则界面刷新后会看不到这些对话——历史落库却只在模型路径生效，是个功能缺口。
+    """
+    if not isinstance(reply, str) or not reply.strip():
+        return
+    history = _get_history(user_id, store)
+    history.extend([
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": reply},
+    ])
+    _save_history(user_id, history, store)
+
+
 def _get_history(user_id: str, store=None) -> list:
     """获取用户的对话历史。
 
@@ -753,12 +768,15 @@ async def run_agent_message(
 
     if not provider.is_configured:
         if image_base64:
-            return "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
-        if should_review(message):
-            return local_review(store, user_id=user_id)
-        if should_plan(message):
-            return create_plan_from_text(store, message, user_id=user_id)
-        return create_task_from_text(store, message, user_id=user_id)
+            reply = "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
+        elif should_review(message):
+            reply = local_review(store, user_id=user_id)
+        elif should_plan(message):
+            reply = create_plan_from_text(store, message, user_id=user_id)
+        else:
+            reply = create_task_from_text(store, message, user_id=user_id)
+        _record_local_turn(user_id, message, reply, store)
+        return reply
 
     try:
         from agents import Runner, set_default_openai_client
@@ -861,15 +879,15 @@ async def run_agent_message_stream(
 
     if not provider.is_configured:
         if image_base64:
-            yield {"type": "chunk", "text": "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"}
-            yield {"type": "done"}
-            return
-        if should_review(message):
-            yield {"type": "chunk", "text": local_review(store, user_id=user_id)}
+            reply = "图片识别功能需要配置 AI 模型。请在 .env 中设置 MOMENTUM_API_KEY。"
+        elif should_review(message):
+            reply = local_review(store, user_id=user_id)
         elif should_plan(message):
-            yield {"type": "chunk", "text": create_plan_from_text(store, message, user_id=user_id)}
+            reply = create_plan_from_text(store, message, user_id=user_id)
         else:
-            yield {"type": "chunk", "text": create_task_from_text(store, message, user_id=user_id)}
+            reply = create_task_from_text(store, message, user_id=user_id)
+        _record_local_turn(user_id, message, reply, store)
+        yield {"type": "chunk", "text": reply}
         yield {"type": "done"}
         return
 

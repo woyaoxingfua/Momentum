@@ -6,6 +6,34 @@ export function initChat(log, input) {
   chatInput = input;
 }
 
+
+
+// 回填持久化的对话历史：刷新页面后上下文仍然可见（历史由后端落库，重启也不丢）。
+export async function loadChatHistory() {
+  if (!chatLog) return [];
+  // 当前会话已经有内容时不回填，避免与刚发出的消息重复。
+  if (chatLog.querySelector(".message")) return [];
+  // chat.js 走原生 fetch（不依赖 api.js），这里保持一致，并把 token 显式带上。
+  const token = typeof localStorage !== "undefined" ? localStorage.getItem("momentum_token") : null;
+  let payload;
+  try {
+    const response = await fetch("/api/chat/history", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) return [];
+    payload = await response.json();
+  } catch {
+    return [];
+  }
+  const turns = Array.isArray(payload?.turns) ? payload.turns : [];
+  for (const turn of turns) {
+    const role = turn?.role === "user" ? "user" : "assistant";
+    const text = typeof turn?.content === "string" ? turn.content : "";
+    if (text.trim()) addMessage(role, text);
+  }
+  return turns;
+}
+
 export function setAfterChat(fn) {
   onAfterChat = fn;
 }

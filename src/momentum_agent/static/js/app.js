@@ -1,6 +1,6 @@
 import { requestJson } from "./api.js";
 import { initTasks, saveEdit, saveSubtask, savePostpone, loadTasks, setTaskStatusFilter, getTaskStatusFilter, renderTasks, renderCurrentTasks, setSortMode, getSortMode, openTaskEditDialog, completeTask as completeTaskAction } from "./tasks.js";
-import { initChat, setAfterChat, sendChat, sendToAgent } from "./chat.js";
+import { initChat, setAfterChat, sendChat, sendToAgent, loadChatHistory } from "./chat.js";
 import { initAdvice, loadAdvice, loadReview, getTodayReviewUrl, syncReviewTask } from "./advice.js";
 import { formatActualFocusDuration } from "./advice-review.mjs";
 import { initConfig, loadConfig, saveConfig, setOnConfigSaved } from "./config.js";
@@ -632,6 +632,7 @@ function init() {
 
   // Chat
   initChat(els.chatLog, els.chatInput);
+void loadChatHistory();
   onAfterChat = async () => {
     await refreshAll();
     syncMobileChat();
