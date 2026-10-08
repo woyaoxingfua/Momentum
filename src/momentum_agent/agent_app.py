@@ -740,6 +740,34 @@ async def run_agent_message(
     return reply
 
 
+
+
+_VISION_ERROR_MARKERS = (
+    "image", "vision", "multimodal", "image_url", "does not support image", "unsupported image",
+    "图片", "视觉", "多模态",
+)
+
+
+def _describe_stream_failure(exc: Exception, *, has_image: bool, provider=None) -> str:
+    """把 provider 失败翻译成可执行的提示，而不是一律说「流中断」。
+
+    归档的优先级建议 6 指出：Ollama 文档不支持 OpenAI 的 image_url 形式，而当前默认路径就是
+    data URI；在没有真实模型验证前不擅自改线格式，但至少要让用户看懂失败原因。
+    """
+    text = f"{type(exc).__name__}: {exc}".lower()
+    status = getattr(exc, "status_code", None)
+    if status == 401 or "authenticationerror" in text or "invalid api key" in text or "401" in text:
+        return "模型服务拒绝了这次请求：API Key 无效或未授权。请在偏好设置里检查 API Key 与 Base URL。"
+    if has_image and (status == 400 or any(marker in text for marker in _VISION_ERROR_MARKERS)):
+        if provider is not None and getattr(provider, "is_ollama", False):
+            return (
+                "当前 Ollama 模型似乎不接受图片输入。请换用具备视觉能力的模型"
+                "（如 qwen2.5-vl、llava 系列），或改用支持 image_url 的服务；"
+                "也可以先用文字描述任务。"
+            )
+        return "当前模型似乎不接受图片输入。请换用具备视觉能力的模型，或先用文字描述任务。"
+    return "流式请求中断，系统没有自动重跑，以避免重复执行工具。请先检查任务状态，再决定是否重新发送。"
+
 async def run_agent_message_stream(
     database_url: str, message: str, *, image_base64: str | None = None, user_id: str = DEFAULT_USER_ID
 ) -> AsyncIterator[dict]:
@@ -838,7 +866,7 @@ async def run_agent_message_stream(
         log.warning("Streaming failed; automatic rerun disabled to avoid repeating tools: %s", exc)
         yield {
             "type": "error",
-            "message": "流式请求中断，系统没有自动重跑，以避免重复执行工具。请先检查任务状态，再决定是否重新发送。",
+            "message": _describe_stream_failure(exc, has_image=bool(image_base64), provider=provider),
         }
         yield {"type": "done"}
         return

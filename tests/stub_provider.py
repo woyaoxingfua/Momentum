@@ -40,6 +40,9 @@ class _StubHandler(BaseHTTPRequestHandler):
         script = server.script or [{"text": ""}]
         turn = script[min(index, len(script) - 1)]
 
+        if turn.get("status"):
+            self._send_error(turn)
+            return
         if turn.get("abort"):
             self.close_connection = True
             try:
@@ -64,6 +67,24 @@ class _StubHandler(BaseHTTPRequestHandler):
                 "arguments": json.dumps(tool.get("arguments", {}), ensure_ascii=False),
             },
         }]
+
+    def _send_error(self, turn):
+        """按脚本返回 provider 侧错误（用于验证客户端的错误分类与提示）。"""
+        status = int(turn.get("status", 400))
+        message = turn.get("error_message", "bad request")
+        payload = {
+            "error": {
+                "message": message,
+                "type": turn.get("error_type", "invalid_request_error"),
+                "code": turn.get("error_code"),
+            }
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_json(self, turn):
         text = turn.get("text")

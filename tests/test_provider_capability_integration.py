@@ -165,3 +165,60 @@ def test_handoff_routes_to_the_specialist_agent(real_agent):
     second = json.dumps(real_agent.server.requests[1], ensure_ascii=False)
     assert "洞察分析专家" in second, "handoff 之后必须由 InsightAgent 的指令接管"
 
+
+
+# ── 7. provider 失败的分类提示（归档优先级 6） ─────────────────
+
+def stream_error(events: list[dict]) -> dict:
+    errors = [event for event in events if event.get("type") == "error"]
+    assert errors, events
+    return errors[0]
+
+
+def test_stream_reports_an_auth_failure_actionably(real_agent):
+    real_agent.server.script = [
+        {"status": 401, "error_message": "Authentication Fails, invalid api key", "error_type": "authentication_error"},
+    ]
+    events = collect_stream(lambda: agent_app.run_agent_message_stream(
+        real_agent.database_url, "你好", user_id=real_agent.user_id))
+    assert [event.get("type") for event in events][-1] == "done"
+    message = stream_error(events)["message"]
+    assert "API Key" in message, message
+    assert "中断" not in message, "不应把鉴权失败说成流中断：" + message
+
+
+def test_stream_explains_unsupported_image_input(real_agent):
+    real_agent.server.script = [
+        {"status": 400, "error_message": "this model does not support image input"},
+    ]
+    events = collect_stream(lambda: agent_app.run_agent_message_stream(
+        real_agent.database_url, "看看这张图", image_base64="QUJD", user_id=real_agent.user_id))
+    assert [event.get("type") for event in events][-1] == "done"
+    message = stream_error(events)["message"]
+    assert "图片" in message or "视觉" in message, message
+
+
+def test_stream_ollama_image_hint_points_at_vision_models(real_agent):
+    """Ollama 不支持 image_url 形式时，要给出可执行的建议而不是泛泛的流中断。"""
+    import os
+
+    os.environ["MOMENTUM_PROVIDER"] = "ollama"
+    try:
+        real_agent.server.script = [
+            {"status": 400, "error_message": "invalid image input for this model"},
+        ]
+        events = collect_stream(lambda: agent_app.run_agent_message_stream(
+            real_agent.database_url, "看看这张图", image_base64="QUJD", user_id=real_agent.user_id))
+        message = stream_error(events)["message"]
+        assert "Ollama" in message, message
+        assert "vl" in message or "llava" in message, message
+    finally:
+        os.environ.pop("MOMENTUM_PROVIDER", None)
+
+
+def test_stream_keeps_the_fail_closed_message_for_other_errors(real_agent):
+    real_agent.server.script = [{"abort": True}]
+    events = collect_stream(lambda: agent_app.run_agent_message_stream(
+        real_agent.database_url, "你好", user_id=real_agent.user_id))
+    message = stream_error(events)["message"]
+    assert "没有自动重跑" in message, message
