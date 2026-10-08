@@ -6,6 +6,7 @@ import { formatActualFocusDuration } from "./advice-review.mjs";
 import { initConfig, loadConfig, saveConfig, setOnConfigSaved } from "./config.js";
 import { initHeartbeat, loadHeartbeatConfig, startHeartbeatChecks } from "./heartbeat.js";
 import { initNotifications } from "./notifications.js";
+import { initApprovals } from "./approvals.mjs";
 import { initBackground as initBackgroundSettings, bindBackgroundSettings } from "./background.mjs";
 import { initAppearance, bindAppearanceSettings, loadAppearancePreference } from "./appearance.mjs";
 import { bindCitySettings, loadCityPreference } from "./city.mjs";
@@ -714,6 +715,10 @@ function init() {
 
   // Browser notifications
   initNotifications();
+initApprovals({
+  approvalsPanel: document.getElementById("approvalsPanel"),
+  approvalsList: document.getElementById("approvalsList"),
+});
 
   // Focus timer
   import("./focus.js").then(({ focusInit }) => focusInit());
