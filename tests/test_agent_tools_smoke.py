@@ -86,13 +86,23 @@ def invoke(tool, task_id: int):
     return asyncio.run(tool.on_invoke_tool._invoke_tool_impl(context, json.dumps(arguments)))
 
 
+@pytest.fixture(params=["sqlite", "mysql"])
+def smoke_store(request):
+    """工具冒烟用的干净后端；未配置 MOMENTUM_TEST_MYSQL_URL 时只跑 SQLite。"""
+    if request.param == "sqlite":
+        url = "sqlite:///" + str(pathlib.Path(tempfile.mkdtemp()) / "tool-smoke.sqlite3")
+        return create_task_store(url)
+    from backend_fixtures import fresh_mysql_store
+
+    return fresh_mysql_store()
+
+
 @pytest.fixture
-def agent_bundle(monkeypatch):
+def agent_bundle(monkeypatch, smoke_store):
     monkeypatch.setenv("MOMENTUM_API_KEY", "stub-key")
     monkeypatch.setenv("MOMENTUM_BASE_URL", "http://127.0.0.1:9/v1")
     monkeypatch.setenv("MOMENTUM_MODEL", "stub-model")
-    url = "sqlite:///" + str(pathlib.Path(tempfile.mkdtemp()) / "tool-smoke.sqlite3")
-    store = create_task_store(url)
+    store = smoke_store
     parent = store.create_task("冒烟父任务", tags=["smoke"], estimated_minutes=60)
     store.create_task("冒烟子任务", parent_task_id=parent.id)
     provider = ProviderConfig(
@@ -149,12 +159,11 @@ def test_at_least_one_write_tool_actually_writes(agent_bundle):
 
 
 
-def test_every_mcp_tool_body_runs(monkeypatch):
+def test_every_mcp_tool_body_runs(monkeypatch, smoke_store):
     """MCP 是对外暴露的另一个面：外部 agent 也会逐个调用这些工具。"""
     from momentum_agent.mcp_server import build_all_tools
 
-    url = "sqlite:///" + str(pathlib.Path(tempfile.mkdtemp()) / "mcp-smoke.sqlite3")
-    store = create_task_store(url)
+    store = smoke_store
     parent = store.create_task("MCP 冒烟任务", tags=["mcp"], estimated_minutes=30)
     store.create_task("MCP 子任务", parent_task_id=parent.id)
 
