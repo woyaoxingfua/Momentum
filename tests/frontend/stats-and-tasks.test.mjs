@@ -1,19 +1,59 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
+// stats.js / tasks.js 会在模块初始化时做一次异步刷新（依赖 localStorage 与 fetch）。
+// Node 里没有这两个全局对象，直接静态 import 会在测试结束后抛 unhandledRejection
+// 并被 node --test 判为整个文件失败。所以先打桩，再动态 import。
+globalThis.localStorage = {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+};
+globalThis.fetch = () => new Promise(() => {});  // 永不 resolve：不产生未处理的拒绝
+globalThis.window = {
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  setInterval: () => 0,
+  clearInterval: () => {},
+  setTimeout: () => 0,
+  clearTimeout: () => {},
+  matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+  location: { search: "", href: "http://localhost/app", pathname: "/app", hash: "" },
+  history: { replaceState: () => {}, state: null },
+  localStorage: globalThis.localStorage,
+};
+globalThis.document = {
+  addEventListener: () => {},
+  getElementById: () => null,
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  documentElement: {
+    classList: { add: () => {}, remove: () => {}, toggle: () => {} },
+    setAttribute: () => {},
+    style: {},
+  },
+  createElement: () => ({
+    classList: { add: () => {}, remove: () => {} },
+    append: () => {},
+    style: {},
+    addEventListener: () => {},
+    setAttribute: () => {},
+  }),
+};
+
+const {
   parseDailyCapacity,
   summarizeDailyWorkload,
   summarizeFutureDueDistribution,
-} from "../../src/momentum_agent/static/js/stats.js";
-import {
+} = await import("../../src/momentum_agent/static/js/stats.js");
+const {
   completionResultMessage,
   getSortMode,
   orderTasksByEstimate,
   parseDueOnDate,
   parseUnestimatedDueByToday,
   setSortMode,
-} from "../../src/momentum_agent/static/js/tasks.js";
+} = await import("../../src/momentum_agent/static/js/tasks.js");
 
 const NOW = new Date(2026, 5, 7, 12, 0, 0);  // 本地时间 2026-06-07 12:00
 
