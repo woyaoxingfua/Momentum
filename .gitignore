@@ -33,3 +33,7 @@ logs/
 *.log
 screenshots/
 test_design.py
+
+# 覆盖率产物（本地跑 coverage 时生成）
+.coverage
+htmlcov/
